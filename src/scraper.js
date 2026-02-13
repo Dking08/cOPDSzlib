@@ -99,6 +99,23 @@ async function fetchDownload(dlPath) {
 }
 
 /**
+ * Fetch all available formats for a book via the papi
+ * @param {string} bookId - The z-lib book ID
+ * @returns {Promise<Array<{id: number, extension: string, filesizeString: string, href: string}>>}
+ */
+async function fetchBookFormats(bookId) {
+  const url = `${ZLIB_BASE}/papi/book/${bookId}/formats`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+    redirect: 'follow',
+  });
+  if (!res.ok) throw new Error(`Formats fetch failed: ${res.status}`);
+  const data = await res.json();
+  if (!data.success || !data.books) return [];
+  return data.books;
+}
+
+/**
  * Proxy a cover image from z-lib / covers CDN
  * @param {string} coverUrl - Full cover image URL
  * @returns {Promise<Response>} Fetch response to pipe
@@ -112,4 +129,4 @@ async function fetchCover(coverUrl) {
   return res;
 }
 
-module.exports = { fetchSearchPage, parseSearchResults, fetchDownload, fetchCover };
+module.exports = { fetchSearchPage, parseSearchResults, fetchDownload, fetchBookFormats, fetchCover };

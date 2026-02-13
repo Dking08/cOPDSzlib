@@ -1,19 +1,31 @@
 const express = require('express');
-const { fetchSearchPage, parseSearchResults, fetchDownload, fetchCover } = require('./src/scraper');
+const { Readable } = require('stream');
+const {
+  fetchSearchPage,
+  parseSearchResults,
+  fetchDownload,
+  fetchBookFormats,
+  fetchCover,
+} = require('./src/scraper');
 const {
   rootCatalog,
   openSearchDescription,
   searchResultsFeed,
+  libraryFeed,
+  bookFormatsFeed,
   OPDS_MIME,
   OPDS_ACQ_MIME,
   SEARCH_MIME,
 } = require('./src/opds');
+const lib = require('./src/library');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
 
 // ─── Middleware ───────────────────────────────────────────────
+
+app.use(express.json());
 
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
@@ -23,13 +35,29 @@ app.use((req, _res, next) => {
 // ─── Health check ─────────────────────────────────────────────
 
 app.get('/', (_req, res) => {
+  const stats = lib.getStats();
   res.json({
     name: 'Readest Z-Library OPDS Bridge',
-    version: '1.0.0',
+    version: '2.0.0',
     opds: `${BASE_URL}/opds`,
-    usage: 'Add this OPDS feed URL to Readest: ' + `${BASE_URL}/opds`,
+    dashboard: `${BASE_URL}/dashboard`,
+    api: {
+      search: `${BASE_URL}/opds/search?q={query}`,
+      library: `${BASE_URL}/opds/library`,
+      formats: `${BASE_URL}/api/formats/{bookId}`,
+      stats: `${BASE_URL}/api/stats`,
+    },
+    stats: {
+      books_tracked: stats.totalBooks,
+      total_downloads: stats.totalDownloads,
+      total_searches: stats.totalSearches,
+    },
   });
 });
+
+// ═══════════════════════════════════════════════════════════════
+//  OPDS FEEDS
+// ═══════════════════════════════════════════════════════════════
 
 // ─── OPDS Root Catalog ────────────────────────────────────────
 
@@ -64,6 +92,12 @@ app.get('/opds/search', async (req, res) => {
     const books = parseSearchResults(html);
     console.log(`[Search] Found ${books.length} results`);
 
+    // Log search & cache books in DB
+    lib.logSearch(query, books.length);
+    for (const book of books) {
+      lib.upsertBook(book);
+    }
+
     res.set('Content-Type', OPDS_ACQ_MIME);
     res.send(searchResultsFeed({ baseUrl: BASE_URL, query, books, page }));
   } catch (err) {
@@ -72,17 +106,103 @@ app.get('/opds/search', async (req, res) => {
   }
 });
 
+// ─── Book Formats (OPDS) ─────────────────────────────────────
+
+app.get('/opds/book/:bookId/formats', async (req, res) => {
+  const { bookId } = req.params;
+
+  try {
+    const formats = await fetchBookFormats(bookId);
+    let book = lib.getBook(bookId);
+
+    if (!book) {
+      // Minimal fallback if book not in DB
+      book = { id: bookId, title: 'Book ' + bookId, author: '', extension: '', filesize: '', download: '' };
+    }
+
+    res.set('Content-Type', OPDS_ACQ_MIME);
+    res.send(bookFormatsFeed({ baseUrl: BASE_URL, book, formats }));
+  } catch (err) {
+    console.error('[Formats Error]', err.message);
+    res.status(502).send(`Formats fetch failed: ${err.message}`);
+  }
+});
+
+// ─── Library Feeds ────────────────────────────────────────────
+
+app.get('/opds/library', (_req, res) => {
+  const books = lib.getLibraryBooks(null, 100, 0);
+  res.set('Content-Type', OPDS_ACQ_MIME);
+  res.send(libraryFeed({ baseUrl: BASE_URL, title: 'My Library', id: 'all', books, status: null }));
+});
+
+app.get('/opds/library/downloads', (_req, res) => {
+  const history = lib.getDownloadHistory(100, 0);
+  // Map download history to a book-like structure
+  const books = history.map((h) => {
+    const cached = lib.getBook(h.book_id);
+    return cached || {
+      id: h.book_id,
+      title: h.title,
+      author: h.author,
+      extension: h.extension,
+      filesize: h.filesize,
+      download: h.dl_path,
+      coverUrl: '',
+      publisher: '',
+      language: '',
+      year: '',
+      rating: '',
+    };
+  });
+  res.set('Content-Type', OPDS_ACQ_MIME);
+  res.send(libraryFeed({ baseUrl: BASE_URL, title: 'Download History', id: 'downloads', books, status: 'downloads' }));
+});
+
+app.get('/opds/library/:status', (req, res) => {
+  const { status } = req.params;
+  const validStatuses = ['downloaded', 'reading', 'finished', 'want-to-read', 'favorite'];
+  if (!validStatuses.includes(status)) {
+    return res.status(400).send('Invalid status');
+  }
+
+  const titleMap = {
+    downloaded: 'Downloaded Books',
+    reading: 'Currently Reading',
+    finished: 'Finished Books',
+    'want-to-read': 'Want to Read',
+    favorite: 'Favorites',
+  };
+
+  const books = lib.getLibraryBooks(status, 100, 0);
+  res.set('Content-Type', OPDS_ACQ_MIME);
+  res.send(libraryFeed({ baseUrl: BASE_URL, title: titleMap[status], id: status, books, status }));
+});
+
 // ─── Download Proxy ───────────────────────────────────────────
 
 app.get('/opds/download/dl/:code', async (req, res) => {
   const dlPath = `/dl/${req.params.code}`;
   const ext = req.query.ext || 'epub';
+  const bookId = req.query.id || '';
 
   try {
-    console.log(`[Download] ${dlPath}`);
+    console.log(`[Download] ${dlPath} (book: ${bookId})`);
+
+    // Log download in history
+    if (bookId) {
+      const book = lib.getBook(bookId);
+      if (book) {
+        lib.logDownload({ ...book, download: dlPath });
+        lib.addToLibrary(bookId, 'downloaded');
+      } else {
+        lib.logDownload({ id: bookId, title: 'Unknown', dl_path: dlPath, extension: ext });
+      }
+    }
+
     const upstream = await fetchDownload(dlPath);
 
-    // Forward content headers from z-lib
+    // Forward content headers
     const contentType = upstream.headers.get('content-type');
     const contentDisp = upstream.headers.get('content-disposition');
     const contentLen = upstream.headers.get('content-length');
@@ -95,8 +215,6 @@ app.get('/opds/download/dl/:code', async (req, res) => {
     }
     if (contentLen) res.set('Content-Length', contentLen);
 
-    // Stream the response body
-    const { Readable } = require('stream');
     const readable = Readable.fromWeb(upstream.body);
     readable.pipe(res);
     readable.on('error', (err) => {
@@ -119,9 +237,8 @@ app.get('/opds/cover', async (req, res) => {
     const upstream = await fetchCover(coverUrl);
     const contentType = upstream.headers.get('content-type') || 'image/jpeg';
     res.set('Content-Type', contentType);
-    res.set('Cache-Control', 'public, max-age=86400'); // cache 24h
+    res.set('Cache-Control', 'public, max-age=86400');
 
-    const { Readable } = require('stream');
     const readable = Readable.fromWeb(upstream.body);
     readable.pipe(res);
   } catch (err) {
@@ -130,21 +247,263 @@ app.get('/opds/cover', async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════
+//  REST API (for dashboard & programmatic use)
+// ═══════════════════════════════════════════════════════════════
+
+// ─── Get all formats for a book ───────────────────────────────
+
+app.get('/api/formats/:bookId', async (req, res) => {
+  try {
+    const formats = await fetchBookFormats(req.params.bookId);
+    res.json({ success: true, bookId: req.params.bookId, formats });
+  } catch (err) {
+    res.status(502).json({ success: false, error: err.message });
+  }
+});
+
+// ─── Library API ──────────────────────────────────────────────
+
+app.get('/api/library', (req, res) => {
+  const status = req.query.status || null;
+  const limit = parseInt(req.query.limit, 10) || 50;
+  const offset = parseInt(req.query.offset, 10) || 0;
+  const books = lib.getLibraryBooks(status, limit, offset);
+  const count = lib.getLibraryCount(status);
+  res.json({ books, total: count });
+});
+
+app.post('/api/library/add', (req, res) => {
+  const { bookId, status } = req.body;
+  if (!bookId) return res.status(400).json({ error: 'bookId required' });
+
+  const validStatuses = ['downloaded', 'reading', 'finished', 'want-to-read', 'favorite'];
+  const s = validStatuses.includes(status) ? status : 'downloaded';
+
+  lib.addToLibrary(bookId, s);
+  res.json({ success: true, bookId, status: s });
+});
+
+app.post('/api/library/remove', (req, res) => {
+  const { bookId, status } = req.body;
+  if (!bookId || !status) return res.status(400).json({ error: 'bookId and status required' });
+
+  lib.removeFromLibrary(bookId, status);
+  res.json({ success: true });
+});
+
+app.post('/api/library/progress', (req, res) => {
+  const { bookId, progress } = req.body;
+  if (!bookId || progress === undefined) return res.status(400).json({ error: 'bookId and progress required' });
+
+  lib.updateProgress(bookId, parseFloat(progress));
+  res.json({ success: true, bookId, progress });
+});
+
+// ─── Stats & History API ──────────────────────────────────────
+
+app.get('/api/stats', (_req, res) => {
+  res.json(lib.getStats());
+});
+
+app.get('/api/history/downloads', (req, res) => {
+  const limit = parseInt(req.query.limit, 10) || 50;
+  const offset = parseInt(req.query.offset, 10) || 0;
+  res.json({ downloads: lib.getDownloadHistory(limit, offset), total: lib.getDownloadCount() });
+});
+
+app.get('/api/history/searches', (req, res) => {
+  const limit = parseInt(req.query.limit, 10) || 20;
+  res.json({ searches: lib.getRecentSearches(limit) });
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  WEB DASHBOARD
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/dashboard', (_req, res) => {
+  const stats = lib.getStats();
+  const recentSearches = lib.getRecentSearches(10);
+
+  const statusBadge = (s) => {
+    const colors = { downloaded: '#3b82f6', reading: '#f59e0b', finished: '#10b981', 'want-to-read': '#8b5cf6', favorite: '#ef4444' };
+    return `<span style="background:${colors[s] || '#6b7280'};color:#fff;padding:2px 8px;border-radius:12px;font-size:12px">${s}</span>`;
+  };
+
+  const libraryRows = lib.getLibraryBooks(null, 20, 0).map((b) => `
+    <tr>
+      <td>${b.title}</td>
+      <td>${b.author}</td>
+      <td>${(b.extension || '').toUpperCase()}</td>
+      <td>${statusBadge(b.lib_status)}</td>
+      <td>${b.progress > 0 ? Math.round(b.progress * 100) + '%' : '-'}</td>
+      <td>${b.lib_added_at || ''}</td>
+    </tr>
+  `).join('');
+
+  const downloadRows = stats.recentDownloads.map((d) => `
+    <tr>
+      <td>${d.title}</td>
+      <td>${d.author}</td>
+      <td>${(d.extension || '').toUpperCase()}</td>
+      <td>${d.filesize}</td>
+      <td>${d.downloaded_at}</td>
+    </tr>
+  `).join('');
+
+  const searchRows = recentSearches.map((s) => `
+    <tr>
+      <td><a href="/opds/search?q=${encodeURIComponent(s.query)}">${s.query}</a></td>
+      <td>${s.results}</td>
+      <td>${s.times}</td>
+      <td>${s.last_searched}</td>
+    </tr>
+  `).join('');
+
+  const statusCounts = {};
+  for (const s of stats.libraryByStatus) statusCounts[s.status] = s.count;
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Z-Library OPDS Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    h1 { font-size: 28px; margin-bottom: 8px; color: #f1f5f9; }
+    .subtitle { color: #94a3b8; margin-bottom: 30px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 30px; }
+    .stat-card { background: #1e293b; border-radius: 12px; padding: 20px; text-align: center; border: 1px solid #334155; }
+    .stat-card .number { font-size: 36px; font-weight: 700; color: #38bdf8; }
+    .stat-card .label { font-size: 13px; color: #94a3b8; margin-top: 4px; }
+    .opds-url { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 16px; margin-bottom: 30px; display: flex; align-items: center; gap: 12px; }
+    .opds-url code { flex: 1; color: #38bdf8; font-size: 15px; word-break: break-all; }
+    .opds-url button { background: #3b82f6; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .opds-url button:hover { background: #2563eb; }
+    .section { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 24px; border: 1px solid #334155; }
+    .section h2 { font-size: 18px; margin-bottom: 16px; color: #f1f5f9; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 10px 12px; border-bottom: 2px solid #334155; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+    td { padding: 10px 12px; border-bottom: 1px solid #1e293b; font-size: 14px; }
+    tr:hover td { background: #334155; }
+    a { color: #38bdf8; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .search-box { display: flex; gap: 8px; margin-bottom: 20px; }
+    .search-box input { flex: 1; padding: 10px 16px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 15px; }
+    .search-box button { background: #3b82f6; color: #fff; border: none; padding: 10px 24px; border-radius: 8px; cursor: pointer; font-size: 15px; }
+    .empty { color: #64748b; text-align: center; padding: 40px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Z-Library OPDS Bridge</h1>
+    <p class="subtitle">Your personal bridge between Readest and Z-Library</p>
+
+    <div class="opds-url">
+      <span style="color:#94a3b8">OPDS Feed:</span>
+      <code id="opdsUrl">${BASE_URL}/opds</code>
+      <button onclick="navigator.clipboard.writeText(document.getElementById('opdsUrl').textContent)">Copy</button>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="number">${stats.totalBooks}</div>
+        <div class="label">Books Tracked</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">${stats.totalDownloads}</div>
+        <div class="label">Downloads</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">${stats.totalSearches}</div>
+        <div class="label">Searches</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">${statusCounts['favorite'] || 0}</div>
+        <div class="label">Favorites</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">${statusCounts['reading'] || 0}</div>
+        <div class="label">Reading</div>
+      </div>
+      <div class="stat-card">
+        <div class="number">${statusCounts['finished'] || 0}</div>
+        <div class="label">Finished</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Quick Search</h2>
+      <form class="search-box" action="/opds/search" method="get">
+        <input name="q" placeholder="Search for books..." autocomplete="off" />
+        <button type="submit">Search</button>
+      </form>
+    </div>
+
+    <div class="section">
+      <h2>Recent Searches</h2>
+      ${searchRows ? `
+      <table>
+        <thead><tr><th>Query</th><th>Results</th><th>Times</th><th>Last Searched</th></tr></thead>
+        <tbody>${searchRows}</tbody>
+      </table>` : '<p class="empty">No searches yet. Search for a book to get started!</p>'}
+    </div>
+
+    <div class="section">
+      <h2>Library</h2>
+      ${libraryRows ? `
+      <table>
+        <thead><tr><th>Title</th><th>Author</th><th>Format</th><th>Status</th><th>Progress</th><th>Added</th></tr></thead>
+        <tbody>${libraryRows}</tbody>
+      </table>` : '<p class="empty">Your library is empty. Download some books to see them here!</p>'}
+    </div>
+
+    <div class="section">
+      <h2>Recent Downloads</h2>
+      ${downloadRows ? `
+      <table>
+        <thead><tr><th>Title</th><th>Author</th><th>Format</th><th>Size</th><th>Downloaded</th></tr></thead>
+        <tbody>${downloadRows}</tbody>
+      </table>` : '<p class="empty">No downloads yet.</p>'}
+    </div>
+
+    <div class="section" style="text-align:center;color:#64748b;font-size:13px;border:none;background:none">
+      <p>
+        <a href="/opds">OPDS Feed</a> &middot;
+        <a href="/api/stats">API Stats</a> &middot;
+        <a href="/api/library">Library API</a> &middot;
+        <a href="/api/history/downloads">Downloads API</a> &middot;
+        <a href="/api/history/searches">Searches API</a>
+      </p>
+    </div>
+  </div>
+</body>
+</html>`);
+});
+
 // ─── Start Server ─────────────────────────────────────────────
 
 app.listen(PORT, () => {
   console.log(`
-╔══════════════════════════════════════════════════════════╗
-║          Readest Z-Library OPDS Bridge                  ║
-╠══════════════════════════════════════════════════════════╣
-║                                                          ║
-║  Server running on port ${String(PORT).padEnd(30)}  ║
-║                                                          ║
-║  OPDS Feed URL:                                          ║
-║  ${(BASE_URL + '/opds').padEnd(55)} ║
-║                                                          ║
-║  Add the above URL to Readest as a custom OPDS feed      ║
-║                                                          ║
-╚══════════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════╗
+║          Readest Z-Library OPDS Bridge v2.0                 ║
+╠══════════════════════════════════════════════════════════════╣
+║                                                              ║
+║  Server:     http://localhost:${String(PORT).padEnd(27)}    ║
+║  OPDS Feed:  ${(BASE_URL + '/opds').padEnd(43)}  ║
+║  Dashboard:  ${(BASE_URL + '/dashboard').padEnd(43)}  ║
+║                                                              ║
+║  Features:                                                   ║
+║    - Search Z-Library books                                  ║
+║    - Multi-format downloads (epub, pdf, mobi, azw3...)       ║
+║    - Personal library tracking                               ║
+║    - Download history & search history                       ║
+║    - Favorites, reading status, progress                     ║
+║    - Web dashboard with stats                                ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
   `);
 });

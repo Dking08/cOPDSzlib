@@ -17,6 +17,7 @@ const EXTENSION_MIME = {
   txt: 'text/plain',
   rtf: 'application/rtf',
   doc: 'application/msword',
+  lit: 'application/x-ms-reader',
   cbr: 'application/x-cbr',
   cbz: 'application/x-cbz',
 };
@@ -76,6 +77,66 @@ function rootCatalog(baseUrl) {
           type="${OPDS_ACQ_MIME}" />
   </entry>
 
+  <entry>
+    <id>urn:readest-zlib-opds:library</id>
+    <title>My Library</title>
+    <content type="text">All books you&apos;ve saved to your library</content>
+    <updated>${now}</updated>
+    <link rel="subsection"
+          href="${baseUrl}/opds/library"
+          type="${OPDS_ACQ_MIME}" />
+  </entry>
+
+  <entry>
+    <id>urn:readest-zlib-opds:favorites</id>
+    <title>Favorites</title>
+    <content type="text">Your favorited books</content>
+    <updated>${now}</updated>
+    <link rel="subsection"
+          href="${baseUrl}/opds/library/favorite"
+          type="${OPDS_ACQ_MIME}" />
+  </entry>
+
+  <entry>
+    <id>urn:readest-zlib-opds:reading</id>
+    <title>Currently Reading</title>
+    <content type="text">Books you&apos;re currently reading</content>
+    <updated>${now}</updated>
+    <link rel="subsection"
+          href="${baseUrl}/opds/library/reading"
+          type="${OPDS_ACQ_MIME}" />
+  </entry>
+
+  <entry>
+    <id>urn:readest-zlib-opds:finished</id>
+    <title>Finished</title>
+    <content type="text">Books you&apos;ve finished reading</content>
+    <updated>${now}</updated>
+    <link rel="subsection"
+          href="${baseUrl}/opds/library/finished"
+          type="${OPDS_ACQ_MIME}" />
+  </entry>
+
+  <entry>
+    <id>urn:readest-zlib-opds:want-to-read</id>
+    <title>Want to Read</title>
+    <content type="text">Books on your reading wishlist</content>
+    <updated>${now}</updated>
+    <link rel="subsection"
+          href="${baseUrl}/opds/library/want-to-read"
+          type="${OPDS_ACQ_MIME}" />
+  </entry>
+
+  <entry>
+    <id>urn:readest-zlib-opds:downloads</id>
+    <title>Download History</title>
+    <content type="text">All books you&apos;ve downloaded</content>
+    <updated>${now}</updated>
+    <link rel="subsection"
+          href="${baseUrl}/opds/library/downloads"
+          type="${OPDS_ACQ_MIME}" />
+  </entry>
+
 </feed>`;
 }
 
@@ -95,36 +156,43 @@ function openSearchDescription(baseUrl) {
 }
 
 /**
- * Generate an OPDS acquisition feed from search results
- * @param {Object} opts
- * @param {string} opts.baseUrl - Server base URL
- * @param {string} opts.query - Search query
- * @param {Array} opts.books - Parsed book objects from scraper
- * @param {number} opts.page - Current page number
+ * Build a single book entry XML with optional multi-format download links
  */
-function searchResultsFeed({ baseUrl, query, books, page }) {
-  const now = new Date().toISOString();
-  const encodedQuery = escapeXml(encodeURIComponent(query));
+function bookEntry({ book, baseUrl, now, formats }) {
+  const mainMime = EXTENSION_MIME[book.extension] || 'application/octet-stream';
+  const dlUrl = `${baseUrl}/opds/download${book.download}?ext=${book.extension}&id=${book.id}`;
+  const coverProxy = book.coverUrl || book.cover_url
+    ? `${baseUrl}/opds/cover?url=${encodeURIComponent(book.coverUrl || book.cover_url)}`
+    : '';
 
-  const entries = books
-    .map((book) => {
-      const mimeType = EXTENSION_MIME[book.extension] || 'application/octet-stream';
-      const dlUrl = `${baseUrl}/opds/download${book.download}?ext=${book.extension}`;
-      const coverProxy = book.coverUrl
-        ? `${baseUrl}/opds/cover?url=${encodeURIComponent(book.coverUrl)}`
-        : '';
+  // Summary
+  const summaryParts = [];
+  if (book.publisher) summaryParts.push(`Publisher: ${book.publisher}`);
+  if (book.year && book.year !== '0') summaryParts.push(`Year: ${book.year}`);
+  if (book.language) summaryParts.push(`Language: ${book.language}`);
+  if (book.filesize) summaryParts.push(`Size: ${book.filesize}`);
+  if (book.extension) summaryParts.push(`Format: ${book.extension.toUpperCase()}`);
+  if (book.rating && book.rating !== '0.0') summaryParts.push(`Rating: ${book.rating}/5`);
+  if (book.lib_status) summaryParts.push(`Status: ${book.lib_status}`);
+  if (book.progress > 0) summaryParts.push(`Progress: ${Math.round(book.progress * 100)}%`);
+  const summary = summaryParts.join(' | ');
 
-      // Build a nice summary
-      const summaryParts = [];
-      if (book.publisher) summaryParts.push(`Publisher: ${book.publisher}`);
-      if (book.year && book.year !== '0') summaryParts.push(`Year: ${book.year}`);
-      if (book.language) summaryParts.push(`Language: ${book.language}`);
-      if (book.filesize) summaryParts.push(`Size: ${book.filesize}`);
-      if (book.extension) summaryParts.push(`Format: ${book.extension.toUpperCase()}`);
-      if (book.rating && book.rating !== '0.0') summaryParts.push(`Rating: ${book.rating}/5`);
-      const summary = summaryParts.join(' | ');
+  // Format links from the papi (if fetched)
+  let formatLinks = '';
+  if (formats && formats.length > 0) {
+    formatLinks = formats
+      .map((f) => {
+        const mime = EXTENSION_MIME[f.extension] || 'application/octet-stream';
+        const fDlUrl = `${baseUrl}/opds/download${f.href}?ext=${f.extension}&id=${f.id}`;
+        return `    <link rel="http://opds-spec.org/acquisition"
+          href="${escapeXml(fDlUrl)}"
+          type="${mime}"
+          title="${escapeXml(f.extension.toUpperCase())} (${escapeXml(f.filesizeString)})" />`;
+      })
+      .join('\n');
+  }
 
-      return `
+  return `
   <entry>
     <id>urn:zlib:book:${escapeXml(book.id)}</id>
     <title>${escapeXml(book.title)}</title>
@@ -141,12 +209,20 @@ function searchResultsFeed({ baseUrl, query, books, page }) {
     ${coverProxy ? `<link rel="http://opds-spec.org/image/thumbnail" href="${coverProxy}" type="image/jpeg" />` : ''}
     <link rel="http://opds-spec.org/acquisition"
           href="${escapeXml(dlUrl)}"
-          type="${mimeType}"
+          type="${mainMime}"
           title="Download ${escapeXml(book.extension.toUpperCase())} (${escapeXml(book.filesize)})" />
+${formatLinks}
   </entry>`;
-    })
-    .join('\n');
+}
 
+/**
+ * Generate an OPDS acquisition feed from search results
+ */
+function searchResultsFeed({ baseUrl, query, books, page }) {
+  const now = new Date().toISOString();
+  const encodedQuery = escapeXml(encodeURIComponent(query));
+
+  const entries = books.map((book) => bookEntry({ book, baseUrl, now })).join('\n');
   const nextPage = books.length >= 10 ? page + 1 : null;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -188,11 +264,80 @@ ${entries}
 </feed>`;
 }
 
+/**
+ * Generate an OPDS acquisition feed for library books
+ */
+function libraryFeed({ baseUrl, title, id, books, status }) {
+  const now = new Date().toISOString();
+  const entries = books.map((book) => bookEntry({ book, baseUrl, now })).join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:dc="http://purl.org/dc/terms/"
+      xmlns:opds="http://opds-spec.org/2010/catalog">
+
+  <id>urn:readest-zlib-opds:library:${escapeXml(id)}</id>
+  <title>${escapeXml(title)}</title>
+  <updated>${now}</updated>
+  <author>
+    <name>Z-Library OPDS</name>
+  </author>
+
+  <link rel="self"
+        href="${baseUrl}/opds/library${status ? '/' + status : ''}"
+        type="${OPDS_ACQ_MIME}" />
+
+  <link rel="start"
+        href="${baseUrl}/opds"
+        type="${OPDS_MIME}" />
+
+  <link rel="search"
+        href="${baseUrl}/opds/opensearch.xml"
+        type="${SEARCH_MIME}" />
+
+${entries}
+
+</feed>`;
+}
+
+/**
+ * Generate an OPDS feed showing all available formats for a specific book
+ */
+function bookFormatsFeed({ baseUrl, book, formats }) {
+  const now = new Date().toISOString();
+  const entry = bookEntry({ book, baseUrl, now, formats });
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"
+      xmlns:dc="http://purl.org/dc/terms/"
+      xmlns:opds="http://opds-spec.org/2010/catalog">
+
+  <id>urn:readest-zlib-opds:formats:${escapeXml(book.id)}</id>
+  <title>Formats: ${escapeXml(book.title)}</title>
+  <updated>${now}</updated>
+  <author>
+    <name>Z-Library OPDS</name>
+  </author>
+
+  <link rel="start"
+        href="${baseUrl}/opds"
+        type="${OPDS_MIME}" />
+
+${entry}
+
+</feed>`;
+}
+
 module.exports = {
   rootCatalog,
   openSearchDescription,
   searchResultsFeed,
+  libraryFeed,
+  bookFormatsFeed,
+  bookEntry,
+  escapeXml,
   OPDS_MIME,
   OPDS_ACQ_MIME,
   SEARCH_MIME,
+  EXTENSION_MIME,
 };
