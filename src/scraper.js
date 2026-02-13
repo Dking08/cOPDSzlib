@@ -1,3 +1,5 @@
+const auth = require('./auth');
+
 const ZLIB_BASE = 'https://z-lib.fm';
 
 const USER_AGENT =
@@ -13,6 +15,18 @@ const DEFAULT_HEADERS = {
 };
 
 /**
+ * Build request headers with auth cookies included
+ * @param {Object} [extra] - Extra headers to merge
+ * @returns {Object} Headers object
+ */
+function buildHeaders(extra = {}) {
+  const headers = { ...DEFAULT_HEADERS, ...extra };
+  const cookie = auth.getCookieHeader();
+  if (cookie) headers['Cookie'] = cookie;
+  return headers;
+}
+
+/**
  * Fetch search results HTML from z-lib.fm
  * @param {string} query - Search query
  * @param {number} [page=1] - Page number
@@ -23,7 +37,8 @@ async function fetchSearchPage(query, page = 1) {
   let url = `${ZLIB_BASE}/s/${encoded}`;
   if (page > 1) url += `?page=${page}`;
 
-  const res = await fetch(url, { headers: DEFAULT_HEADERS, redirect: 'follow' });
+  const res = await fetch(url, { headers: buildHeaders(), redirect: 'follow' });
+  auth.storeCookiesFromResponse(res);
   if (!res.ok) throw new Error(`Search fetch failed: ${res.status} ${res.statusText}`);
   return res.text();
 }
@@ -82,20 +97,83 @@ function parseSearchResults(html) {
 
 /**
  * Stream the book download from z-lib.fm
+ * Handles cookies, redirects, and detects error pages
  * @param {string} dlPath - The download path (e.g. /dl/JrpaOxdXA0)
- * @returns {Promise<Response>} Fetch response to pipe
+ * @returns {Promise<{response: Response, error: string|null}>}
  */
 async function fetchDownload(dlPath) {
   const url = `${ZLIB_BASE}${dlPath}`;
+
+  // Step 1: If no cookies yet, prime the cookie jar by visiting the site
+  if (!auth.getCookieHeader()) {
+    try {
+      const primeRes = await fetch(ZLIB_BASE, {
+        headers: { 'User-Agent': USER_AGENT },
+        redirect: 'follow',
+      });
+      auth.storeCookiesFromResponse(primeRes);
+      await primeRes.text(); // consume body
+    } catch (_) {
+      // non-fatal
+    }
+  }
+
+  // Step 2: Fetch the download with full browser-like headers
   const res = await fetch(url, {
-    headers: {
-      ...DEFAULT_HEADERS,
+    headers: buildHeaders({
       Referer: `${ZLIB_BASE}/`,
-    },
+      'sec-ch-ua': '"Chromium";v="143", "Not A(Brand";v="24"',
+      'sec-ch-ua-mobile': '?0',
+      'sec-ch-ua-platform': '"Windows"',
+      'sec-fetch-dest': 'document',
+      'sec-fetch-mode': 'navigate',
+      'sec-fetch-site': 'same-origin',
+      'sec-fetch-user': '?1',
+    }),
     redirect: 'follow',
   });
-  if (!res.ok) throw new Error(`Download failed: ${res.status} ${res.statusText}`);
-  return res;
+
+  auth.storeCookiesFromResponse(res);
+
+  if (!res.ok) {
+    return { response: res, error: `Download failed: ${res.status} ${res.statusText}` };
+  }
+
+  // Step 3: Validate the response is actually a file, not an HTML error page
+  const contentType = (res.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('text/html')) {
+    // It's HTML — likely a rate-limit or login page
+    const html = await res.text();
+    const cheerio = require('cheerio');
+    const $ = cheerio.load(html);
+
+    // Check for rate limit error
+    const limitHeader = $('.download-limits-error__header').text().trim();
+    const limitMessage = $('.download-limits-error__message').text().trim();
+
+    if (limitHeader || limitMessage) {
+      const msg = limitHeader
+        ? `${limitHeader}: ${limitMessage}`
+        : 'Download limit reached. Please configure z-lib account cookies.';
+      return { response: null, error: msg };
+    }
+
+    // Check for login redirect
+    if (html.includes('loginForm') || html.includes('/login')) {
+      return {
+        response: null,
+        error: 'Authentication required. Please login via /api/auth/login or set ZLIB_COOKIES.',
+      };
+    }
+
+    return {
+      response: null,
+      error: 'Download returned HTML instead of file. Check auth configuration.',
+    };
+  }
+
+  // Success — it's an actual file
+  return { response: res, error: null };
 }
 
 /**
@@ -106,9 +184,10 @@ async function fetchDownload(dlPath) {
 async function fetchBookFormats(bookId) {
   const url = `${ZLIB_BASE}/papi/book/${bookId}/formats`;
   const res = await fetch(url, {
-    headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+    headers: buildHeaders({ Accept: 'application/json' }),
     redirect: 'follow',
   });
+  auth.storeCookiesFromResponse(res);
   if (!res.ok) throw new Error(`Formats fetch failed: ${res.status}`);
   const data = await res.json();
   if (!data.success || !data.books) return [];
@@ -122,9 +201,10 @@ async function fetchBookFormats(bookId) {
  */
 async function fetchCover(coverUrl) {
   const res = await fetch(coverUrl, {
-    headers: { 'User-Agent': USER_AGENT, Referer: `${ZLIB_BASE}/` },
+    headers: buildHeaders({ Referer: `${ZLIB_BASE}/` }),
     redirect: 'follow',
   });
+  auth.storeCookiesFromResponse(res);
   if (!res.ok) throw new Error(`Cover fetch failed: ${res.status}`);
   return res;
 }

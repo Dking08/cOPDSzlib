@@ -59,23 +59,8 @@ function rootCatalog(baseUrl) {
         type="${OPDS_MIME}" />
 
   <link rel="search"
-        href="${baseUrl}/opds/search?q={searchTerms}"
-        type="${OPDS_ACQ_MIME}"
-        title="Search Z-Library" />
-
-  <link rel="search"
         href="${baseUrl}/opds/opensearch.xml"
         type="${SEARCH_MIME}" />
-
-  <entry>
-    <id>urn:readest-zlib-opds:search</id>
-    <title>Search Books</title>
-    <content type="text">Search Z-Library&apos;s vast collection of books</content>
-    <updated>${now}</updated>
-    <link rel="subsection"
-          href="${baseUrl}/opds/search?q={searchTerms}"
-          type="${OPDS_ACQ_MIME}" />
-  </entry>
 
   <entry>
     <id>urn:readest-zlib-opds:library</id>

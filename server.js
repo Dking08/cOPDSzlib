@@ -18,6 +18,7 @@ const {
   SEARCH_MIME,
 } = require('./src/opds');
 const lib = require('./src/library');
+const auth = require('./src/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,7 +39,7 @@ app.get('/', (_req, res) => {
   const stats = lib.getStats();
   res.json({
     name: 'Readest Z-Library OPDS Bridge',
-    version: '2.0.0',
+    version: '3.0.0',
     opds: `${BASE_URL}/opds`,
     dashboard: `${BASE_URL}/dashboard`,
     api: {
@@ -46,6 +47,11 @@ app.get('/', (_req, res) => {
       library: `${BASE_URL}/opds/library`,
       formats: `${BASE_URL}/api/formats/{bookId}`,
       stats: `${BASE_URL}/api/stats`,
+    },
+    auth: {
+      status: `${BASE_URL}/api/auth/status`,
+      login: `${BASE_URL}/api/auth/login`,
+      cookies: `${BASE_URL}/api/auth/cookies`,
     },
     stats: {
       books_tracked: stats.totalBooks,
@@ -202,10 +208,22 @@ app.get('/opds/download/dl/:code', async (req, res) => {
 
     const upstream = await fetchDownload(dlPath);
 
+    // Check for download errors (rate limit, auth required, etc.)
+    if (upstream.error) {
+      console.error(`[Download Error] ${upstream.error}`);
+      const statusCode = upstream.error.includes('Authentication') ? 401 : 429;
+      return res.status(statusCode).json({
+        error: upstream.error,
+        help: 'Configure z-lib cookies via POST /api/auth/cookies or login via POST /api/auth/login',
+      });
+    }
+
+    const response = upstream.response;
+
     // Forward content headers
-    const contentType = upstream.headers.get('content-type');
-    const contentDisp = upstream.headers.get('content-disposition');
-    const contentLen = upstream.headers.get('content-length');
+    const contentType = response.headers.get('content-type');
+    const contentDisp = response.headers.get('content-disposition');
+    const contentLen = response.headers.get('content-length');
 
     if (contentType) res.set('Content-Type', contentType);
     if (contentDisp) {
@@ -215,7 +233,7 @@ app.get('/opds/download/dl/:code', async (req, res) => {
     }
     if (contentLen) res.set('Content-Length', contentLen);
 
-    const readable = Readable.fromWeb(upstream.body);
+    const readable = Readable.fromWeb(response.body);
     readable.pipe(res);
     readable.on('error', (err) => {
       console.error('[Download Stream Error]', err.message);
@@ -245,6 +263,37 @@ app.get('/opds/cover', async (req, res) => {
     console.error('[Cover Error]', err.message);
     res.status(502).send('Cover fetch failed');
   }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  AUTH API
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/auth/status', (_req, res) => {
+  res.json(auth.getStatus());
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'email and password required' });
+  }
+  const result = await auth.login(email, password);
+  res.json(result);
+});
+
+app.post('/api/auth/cookies', (req, res) => {
+  const { cookies } = req.body;
+  if (!cookies) {
+    return res.status(400).json({ error: 'cookies string required (e.g. "remix_userid=123; remix_userkey=abc")' });
+  }
+  auth.setCookies(cookies);
+  res.json({ success: true, ...auth.getStatus() });
+});
+
+app.post('/api/auth/logout', (_req, res) => {
+  auth.clearCookies();
+  res.json({ success: true, message: 'Cookies cleared' });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -324,6 +373,7 @@ app.get('/api/history/searches', (req, res) => {
 app.get('/dashboard', (_req, res) => {
   const stats = lib.getStats();
   const recentSearches = lib.getRecentSearches(10);
+  const authStatus = auth.getStatus();
 
   const statusBadge = (s) => {
     const colors = { downloaded: '#3b82f6', reading: '#f59e0b', finished: '#10b981', 'want-to-read': '#8b5cf6', favorite: '#ef4444' };
@@ -408,6 +458,31 @@ app.get('/dashboard', (_req, res) => {
       <button onclick="navigator.clipboard.writeText(document.getElementById('opdsUrl').textContent)">Copy</button>
     </div>
 
+    <div class="section" style="border-color:${authStatus.authenticated ? '#10b981' : '#ef4444'}">
+      <h2>Z-Library Auth ${authStatus.authenticated ? '<span style="color:#10b981">● Connected</span>' : '<span style="color:#ef4444">● Not Connected</span>'}</h2>
+      ${authStatus.authenticated
+        ? `<p style="color:#94a3b8;margin-bottom:12px">Logged in${authStatus.email ? ' as <strong>' + authStatus.email + '</strong>' : ''}. Cookies: ${authStatus.cookieNames.join(', ')}</p>
+           <button onclick="fetch('/api/auth/logout',{method:'POST'}).then(()=>location.reload())" style="background:#ef4444;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">Logout</button>`
+        : `<p style="color:#94a3b8;margin-bottom:12px">Login to bypass download limits (5/day anonymous limit)</p>
+           <form onsubmit="event.preventDefault();fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:this.email.value,password:this.password.value})}).then(r=>r.json()).then(d=>{alert(d.message||d.error);if(d.success)location.reload()})">
+             <div style="display:flex;gap:8px;flex-wrap:wrap">
+               <input name="email" type="email" placeholder="Z-Library email" style="flex:1;min-width:200px;padding:8px 12px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0" required />
+               <input name="password" type="password" placeholder="Password" style="flex:1;min-width:200px;padding:8px 12px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0" required />
+               <button type="submit" style="background:#3b82f6;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer">Login</button>
+             </div>
+           </form>
+           <details style="margin-top:12px">
+             <summary style="color:#94a3b8;cursor:pointer;font-size:13px">Or paste cookies manually</summary>
+             <form onsubmit="event.preventDefault();fetch('/api/auth/cookies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookies:this.cookies.value})}).then(r=>r.json()).then(d=>{alert(d.authenticated?'Cookies set!':d.error);if(d.authenticated)location.reload()})" style="margin-top:8px">
+               <div style="display:flex;gap:8px">
+                 <input name="cookies" placeholder="remix_userid=123; remix_userkey=abc; ..." style="flex:1;padding:8px 12px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-family:monospace;font-size:12px" required />
+                 <button type="submit" style="background:#8b5cf6;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">Set</button>
+               </div>
+             </form>
+           </details>`
+      }
+    </div>
+
     <div class="stats-grid">
       <div class="stat-card">
         <div class="number">${stats.totalBooks}</div>
@@ -489,7 +564,7 @@ app.get('/dashboard', (_req, res) => {
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║          Readest Z-Library OPDS Bridge v2.0                 ║
+║          Readest Z-Library OPDS Bridge v3.0                 ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  Server:     http://localhost:${String(PORT).padEnd(27)}    ║
@@ -499,6 +574,7 @@ app.listen(PORT, () => {
 ║  Features:                                                   ║
 ║    - Search Z-Library books                                  ║
 ║    - Multi-format downloads (epub, pdf, mobi, azw3...)       ║
+║    - Z-Library auth (login or paste cookies)                  ║
 ║    - Personal library tracking                               ║
 ║    - Download history & search history                       ║
 ║    - Favorites, reading status, progress                     ║
