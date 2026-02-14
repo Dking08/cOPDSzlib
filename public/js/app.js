@@ -219,7 +219,16 @@ function renderAuthUI() {
     loggedIn.classList.remove('hidden');
     loggedOut.classList.add('hidden');
     document.getElementById('authEmailDisplay').textContent = state.auth.email || 'Authenticated';
-    document.getElementById('authCookieInfo').textContent = `Cookies: ${state.auth.cookieNames.join(', ')}`;
+    document.getElementById('authCookieInfo').textContent = `Cookies: ${(state.auth.cookieNames || []).join(', ')}`;
+
+    // Download quota info
+    const dlInfo = document.getElementById('authDownloadInfo');
+    if (state.auth.downloads) {
+      const d = state.auth.downloads;
+      dlInfo.textContent = `Downloads today: ${d.today} / ${d.limit} (${d.remaining} remaining)`;
+    } else {
+      dlInfo.textContent = '';
+    }
   } else {
     loggedIn.classList.add('hidden');
     loggedOut.classList.remove('hidden');
@@ -236,6 +245,13 @@ function updateSidebarAuth() {
     badge.className = 'auth-badge disconnected';
     label.textContent = 'Not Connected';
   }
+}
+
+// Auth tab switching
+function switchAuthTab(tab) {
+  document.querySelectorAll('.auth-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.getElementById('authTabLogin').classList.toggle('active', tab === 'login');
+  document.getElementById('authTabRegister').classList.toggle('active', tab === 'register');
 }
 
 async function handleLogin(e) {
@@ -261,6 +277,74 @@ async function handleLogin(e) {
     btn.disabled = false;
     btn.textContent = 'Login';
   }
+}
+
+// Registration Step 1: Send verification code
+async function handleRegSendCode(e) {
+  e.preventDefault();
+  const email = document.getElementById('regEmail').value;
+  const password = document.getElementById('regPassword').value;
+  const name = document.getElementById('regName').value || 'User';
+  const btn = document.getElementById('regSendCodeBtn');
+
+  if (password.length < 6) {
+    toast('Password must be at least 6 characters', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    const result = await API.post('/api/auth/send-code', { email, password, name });
+    if (result.success) {
+      toast('Verification code sent! Check your email.', 'success');
+      document.getElementById('regEmailDisplay').textContent = email;
+      document.getElementById('regStep1').classList.add('hidden');
+      document.getElementById('regStep2').classList.remove('hidden');
+      document.getElementById('regCode').focus();
+    } else {
+      toast(result.message || 'Failed to send code', 'error');
+    }
+  } catch (err) {
+    toast('Error: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send Code';
+  }
+}
+
+// Registration Step 2: Verify code and complete registration
+async function handleRegister(e) {
+  e.preventDefault();
+  const email = document.getElementById('regEmail').value;
+  const password = document.getElementById('regPassword').value;
+  const name = document.getElementById('regName').value || 'User';
+  const code = document.getElementById('regCode').value;
+  const btn = document.getElementById('regVerifyBtn');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>';
+
+  try {
+    const result = await API.post('/api/auth/register', { email, password, name, code });
+    if (result.success) {
+      toast('Account created & logged in!', 'success');
+      await loadAuthStatus();
+    } else {
+      toast(result.message || 'Registration failed', 'error');
+    }
+  } catch (err) {
+    toast('Error: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Verify & Register';
+  }
+}
+
+function regGoBack() {
+  document.getElementById('regStep2').classList.add('hidden');
+  document.getElementById('regStep1').classList.remove('hidden');
 }
 
 async function handleCookies(e) {
@@ -643,6 +727,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('loginForm').addEventListener('submit', handleLogin);
   document.getElementById('cookieForm').addEventListener('submit', handleCookies);
   document.getElementById('logoutBtn').addEventListener('click', handleLogout);
+
+  // Auth tabs
+  document.querySelectorAll('.auth-tab').forEach(t => {
+    t.addEventListener('click', () => switchAuthTab(t.dataset.tab));
+  });
+
+  // Registration
+  document.getElementById('regForm').addEventListener('submit', handleRegSendCode);
+  document.getElementById('regVerifyForm').addEventListener('submit', handleRegister);
+  document.getElementById('regBackBtn').addEventListener('click', regGoBack);
 
   // Proxy
   document.getElementById('proxyForm').addEventListener('submit', handleProxy);

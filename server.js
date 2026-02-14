@@ -213,6 +213,9 @@ app.get('/opds/download/dl/:code', async (req, res) => {
   try {
     console.log(`[Download] ${dlPath} (book: ${bookId})`);
 
+    // Auto-refresh session before downloading
+    await auth.ensureSession();
+
     // Log download in history
     if (bookId) {
       const book = lib.getBook(bookId);
@@ -250,6 +253,9 @@ app.get('/opds/download/dl/:code', async (req, res) => {
       res.set('Content-Disposition', `attachment; filename="book.${ext}"`);
     }
     if (contentLen) res.set('Content-Length', contentLen);
+
+    // Track successful download
+    auth.trackDownload();
 
     const readable = Readable.fromWeb(response.body);
     readable.pipe(res);
@@ -365,6 +371,26 @@ app.post('/api/auth/login', async (req, res) => {
     return res.status(400).json({ error: 'email and password required' });
   }
   const result = await auth.login(email, password);
+  res.json(result);
+});
+
+// ─── Registration (2-step) ────────────────────────────────────
+
+app.post('/api/auth/send-code', async (req, res) => {
+  const { email, password, name } = req.body;
+  if (!email || !password) {
+    return res.status(400).json({ error: 'email and password required' });
+  }
+  const result = await auth.sendVerificationCode(email, password, name || 'User');
+  res.json(result);
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  const { email, password, name, code } = req.body;
+  if (!email || !password || !code) {
+    return res.status(400).json({ error: 'email, password, and code required' });
+  }
+  const result = await auth.register(email, password, name || 'User', code);
   res.json(result);
 });
 

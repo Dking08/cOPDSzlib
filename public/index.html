@@ -100,16 +100,55 @@
       <!-- Auth Section -->
       <div class="settings-card">
         <h3>Z-Library Account</h3>
-        <p class="settings-desc">Login to increase download limit from 5/day to 10/day. Add a Telegram bot for 20/day.</p>
+        <p class="settings-desc">Login or create an account to get 10 downloads/day (vs 5 anonymous). Credentials are stored locally for auto-refresh.</p>
         <div id="authSection">
           <div id="authLoggedOut">
-            <form id="loginForm" class="settings-form">
-              <div class="form-row">
-                <input type="email" id="loginEmail" placeholder="Z-Library email" required />
-                <input type="password" id="loginPassword" placeholder="Password" required />
-                <button type="submit" id="loginBtn">Login</button>
+            <!-- Tab bar -->
+            <div class="auth-tabs">
+              <button class="auth-tab active" data-tab="login">Login</button>
+              <button class="auth-tab" data-tab="register">Create Account</button>
+            </div>
+
+            <!-- Login Tab -->
+            <div id="authTabLogin" class="auth-tab-content active">
+              <form id="loginForm" class="settings-form">
+                <div class="form-row">
+                  <input type="email" id="loginEmail" placeholder="Z-Library email" required />
+                  <input type="password" id="loginPassword" placeholder="Password" required />
+                  <button type="submit" id="loginBtn">Login</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Register Tab -->
+            <div id="authTabRegister" class="auth-tab-content">
+              <!-- Step 1: Enter details & send code -->
+              <div id="regStep1">
+                <form id="regForm" class="settings-form">
+                  <div class="form-row">
+                    <input type="email" id="regEmail" placeholder="Your email" required />
+                    <input type="password" id="regPassword" placeholder="Password (6+ chars)" required minlength="6" />
+                  </div>
+                  <div class="form-row" style="margin-top:8px">
+                    <input type="text" id="regName" placeholder="Nickname (optional)" />
+                    <button type="submit" id="regSendCodeBtn">Send Code</button>
+                  </div>
+                </form>
+                <p class="text-muted" style="font-size:12px;margin-top:4px">A 4-digit code will be sent to your email for verification.</p>
               </div>
-            </form>
+              <!-- Step 2: Enter verification code -->
+              <div id="regStep2" class="hidden">
+                <p class="reg-step-msg">Enter the 4-digit code sent to <strong id="regEmailDisplay"></strong></p>
+                <form id="regVerifyForm" class="settings-form">
+                  <div class="form-row">
+                    <input type="text" id="regCode" placeholder="4-digit code" required maxlength="6" pattern="[0-9]{4,6}" style="max-width:160px;text-align:center;font-size:18px;letter-spacing:8px" />
+                    <button type="submit" id="regVerifyBtn">Verify & Register</button>
+                    <button type="button" id="regBackBtn" class="btn-secondary">Back</button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
             <details class="cookie-details">
               <summary>Or paste cookies manually</summary>
               <form id="cookieForm" class="settings-form">
@@ -126,6 +165,7 @@
               <div>
                 <strong id="authEmailDisplay"></strong>
                 <p class="text-muted" id="authCookieInfo"></p>
+                <p class="text-muted" id="authDownloadInfo"></p>
               </div>
               <button id="logoutBtn" class="btn-danger">Logout</button>
             </div>

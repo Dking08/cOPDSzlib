@@ -365,6 +365,45 @@ body { display: flex; }
 .cookie-details { margin-top: 10px; }
 .cookie-details summary { font-size: 13px; color: var(--text-dim); cursor: pointer; }
 
+/* Auth tabs */
+.auth-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.auth-tab {
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+.auth-tab:hover { color: var(--text); }
+.auth-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+.auth-tab-content { display: none; }
+.auth-tab-content.active { display: block; }
+
+/* Registration steps */
+.reg-step-msg { font-size: 13px; margin-bottom: 10px; color: var(--text-dim); }
+.reg-step-msg strong { color: var(--primary); }
+.btn-secondary {
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn-secondary:hover { border-color: var(--text-dim); color: var(--text); }
+
 .auth-info {
   display: flex;
   align-items: center;
