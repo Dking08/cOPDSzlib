@@ -230,6 +230,7 @@ module.exports = {
   getLibraryBooks,
   getLibraryCount,
   isInLibrary,
+  getBookStatuses: isInLibrary,
   logDownload,
   getDownloadHistory,
   getDownloadCount,

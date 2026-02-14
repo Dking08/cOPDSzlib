@@ -1,11 +1,18 @@
 const express = require('express');
 const { Readable } = require('stream');
+const path = require('path');
 const {
   fetchSearchPage,
   parseSearchResults,
   fetchDownload,
   fetchBookFormats,
   fetchCover,
+  getMirror,
+  getMirrorStatus,
+  setMirror,
+  setProxy,
+  getProxyStatus,
+  MIRRORS,
 } = require('./src/scraper');
 const {
   rootCatalog,
@@ -24,28 +31,39 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const BASE_URL = (process.env.BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, '');
 
+/** Map DB book row to frontend-friendly shape */
+function mapBook(b) {
+  if (!b) return b;
+  b.coverUrl = b.cover_url || b.coverUrl || '';
+  return b;
+}
+
 // ─── Middleware ───────────────────────────────────────────────
 
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.use((req, _res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
-// ─── Health check ─────────────────────────────────────────────
+// ─── Health check / API info ──────────────────────────────────
 
-app.get('/', (_req, res) => {
+app.get('/api/info', (_req, res) => {
   const stats = lib.getStats();
   res.json({
     name: 'Readest Z-Library OPDS Bridge',
     version: '3.0.0',
+    frontend: `${BASE_URL}/`,
     opds: `${BASE_URL}/opds`,
     dashboard: `${BASE_URL}/dashboard`,
     api: {
-      search: `${BASE_URL}/opds/search?q={query}`,
-      library: `${BASE_URL}/opds/library`,
+      search: `${BASE_URL}/api/search?q={query}`,
+      library: `${BASE_URL}/api/library`,
       formats: `${BASE_URL}/api/formats/{bookId}`,
+      mirrors: `${BASE_URL}/api/mirrors`,
+      proxy: `${BASE_URL}/api/proxy`,
       stats: `${BASE_URL}/api/stats`,
     },
     auth: {
@@ -266,6 +284,74 @@ app.get('/opds/cover', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
+//  JSON SEARCH API (for frontend)
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/search', async (req, res) => {
+  const query = req.query.q || '';
+  const page = parseInt(req.query.page, 10) || 1;
+  if (!query.trim()) return res.json({ books: [], page: 1 });
+
+  try {
+    console.log(`[API Search] query="${query}" page=${page}`);
+    const html = await fetchSearchPage(query, page);
+    const books = parseSearchResults(html);
+    lib.logSearch(query, books.length);
+    for (const book of books) lib.upsertBook(book);
+    res.json({ books, page, count: books.length });
+  } catch (err) {
+    console.error('[API Search Error]', err.message);
+    res.status(502).json({ error: err.message, books: [] });
+  }
+});
+
+// ─── Book Lookup ──────────────────────────────────────────────
+
+app.get('/api/book/:bookId', (req, res) => {
+  const book = lib.getBook(req.params.bookId);
+  if (!book) return res.status(404).json({ error: 'Book not found' });
+  // Map DB column name to frontend-expected key
+  book.coverUrl = book.cover_url || '';
+  res.json(book);
+});
+
+// ─── Library Status for a Book ────────────────────────────────
+
+app.get('/api/library/status/:bookId', (req, res) => {
+  try {
+    const statuses = lib.getBookStatuses ? lib.getBookStatuses(req.params.bookId) : [];
+    res.json({ bookId: req.params.bookId, statuses });
+  } catch {
+    res.json({ bookId: req.params.bookId, statuses: [] });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+//  MIRROR & PROXY API
+// ═══════════════════════════════════════════════════════════════
+
+app.get('/api/mirrors', (_req, res) => {
+  res.json({ mirrors: getMirrorStatus(), current: getMirror() });
+});
+
+app.post('/api/mirrors', (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: 'url required' });
+  setMirror(url);
+  res.json({ success: true, current: getMirror(), mirrors: getMirrorStatus() });
+});
+
+app.get('/api/proxy', (_req, res) => {
+  res.json(getProxyStatus());
+});
+
+app.post('/api/proxy', async (req, res) => {
+  const { url } = req.body;
+  const result = await setProxy(url || '');
+  res.json(result);
+});
+
+// ═══════════════════════════════════════════════════════════════
 //  AUTH API
 // ═══════════════════════════════════════════════════════════════
 
@@ -317,7 +403,7 @@ app.get('/api/library', (req, res) => {
   const status = req.query.status || null;
   const limit = parseInt(req.query.limit, 10) || 50;
   const offset = parseInt(req.query.offset, 10) || 0;
-  const books = lib.getLibraryBooks(status, limit, offset);
+  const books = lib.getLibraryBooks(status, limit, offset).map(mapBook);
   const count = lib.getLibraryCount(status);
   res.json({ books, total: count });
 });
@@ -568,17 +654,18 @@ app.listen(PORT, () => {
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  Server:     http://localhost:${String(PORT).padEnd(27)}    ║
+║  Frontend:   ${(BASE_URL + '/').padEnd(43)}  ║
 ║  OPDS Feed:  ${(BASE_URL + '/opds').padEnd(43)}  ║
 ║  Dashboard:  ${(BASE_URL + '/dashboard').padEnd(43)}  ║
 ║                                                              ║
 ║  Features:                                                   ║
-║    - Search Z-Library books                                  ║
+║    - Web frontend (search, library, downloads, settings)     ║
 ║    - Multi-format downloads (epub, pdf, mobi, azw3...)       ║
 ║    - Z-Library auth (login or paste cookies)                  ║
+║    - Mirror rotation (${MIRRORS.length} mirrors) + proxy support               ║
 ║    - Personal library tracking                               ║
-║    - Download history & search history                       ║
-║    - Favorites, reading status, progress                     ║
-║    - Web dashboard with stats                                ║
+║    - Download & search history                               ║
+║    - OPDS feed for e-reader apps                             ║
 ║                                                              ║
 ╚══════════════════════════════════════════════════════════════╝
   `);

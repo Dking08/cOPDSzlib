@@ -1,0 +1,5 @@
+kind: wasmer.io/App.v0
+name: cOPDS
+owner: qdasor
+package: .
+app_id: da_RxJIdtAUkmwV

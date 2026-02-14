@@ -3,7 +3,6 @@
  * Supports manual cookie entry and email/password login
  */
 
-const ZLIB_BASE = 'https://z-lib.fm';
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36';
 
@@ -53,16 +52,20 @@ function getCookieHeader() {
  * Store cookies from a fetch Response's Set-Cookie headers
  */
 function storeCookiesFromResponse(response) {
-  // getSetCookie() is available in Node 20+
   const setCookies = response.headers.getSetCookie
     ? response.headers.getSetCookie()
     : [];
   for (const sc of setCookies) {
     const parsed = parseSetCookie(sc);
-    if (parsed) {
-      cookieJar[parsed.name] = parsed.value;
-    }
+    if (parsed) cookieJar[parsed.name] = parsed.value;
   }
+}
+
+/**
+ * Check if the cookie jar contains real auth cookies
+ */
+function hasAuthCookies() {
+  return !!(cookieJar['remix_userid'] || cookieJar['remix_userkey']);
 }
 
 /**
@@ -72,39 +75,35 @@ function initFromEnv() {
   const envCookies = process.env.ZLIB_COOKIES;
   if (envCookies) {
     parseCookieString(envCookies);
-    isAuthenticated = true;
-    console.log('[Auth] Loaded cookies from ZLIB_COOKIES env var');
-    console.log('[Auth] Cookie names:', Object.keys(cookieJar).join(', '));
   }
-
-  // Also support individual env vars
   if (process.env.ZLIB_REMIX_USERID) {
     cookieJar['remix_userid'] = process.env.ZLIB_REMIX_USERID;
-    isAuthenticated = true;
   }
   if (process.env.ZLIB_REMIX_USERKEY) {
     cookieJar['remix_userkey'] = process.env.ZLIB_REMIX_USERKEY;
+  }
+  if (hasAuthCookies()) {
     isAuthenticated = true;
+    console.log('[Auth] Authenticated via environment variables');
   }
 }
 
 /**
- * Login to z-lib.fm with email/password
- * @param {string} email
- * @param {string} password
- * @returns {Promise<{success: boolean, message: string}>}
+ * Login to z-lib with email/password
+ * z-lib returns 200 + homepage for both success & failure.
+ * Success is detected by remix_userid / remix_userkey cookies being set.
  */
-async function login(email, password) {
+async function login(email, password, domain = 'https://z-lib.fm') {
   try {
-    // Step 1: Get the login page to collect initial cookies
-    const loginPageRes = await fetch(`${ZLIB_BASE}/login`, {
+    // Step 1: Get login page cookies (bsrv)
+    const loginPageRes = await fetch(`${domain}/login`, {
       headers: { 'User-Agent': USER_AGENT },
       redirect: 'follow',
     });
     storeCookiesFromResponse(loginPageRes);
-    await loginPageRes.text(); // consume body
+    await loginPageRes.text();
 
-    // Step 2: POST login form
+    // Step 2: POST login
     const formData = new URLSearchParams();
     formData.append('email', email);
     formData.append('password', password);
@@ -112,78 +111,30 @@ async function login(email, password) {
     formData.append('action', 'login');
     formData.append('redirectUrl', '');
 
-    const loginRes = await fetch(`${ZLIB_BASE}/`, {
+    const loginRes = await fetch(`${domain}/`, {
       method: 'POST',
       headers: {
         'User-Agent': USER_AGENT,
         'Content-Type': 'application/x-www-form-urlencoded',
         Cookie: getCookieHeader(),
-        Referer: `${ZLIB_BASE}/login`,
-        Origin: ZLIB_BASE,
+        Referer: `${domain}/login`,
+        Origin: domain,
       },
       body: formData.toString(),
-      redirect: 'manual', // Don't follow redirect to capture cookies
+      redirect: 'follow',
     });
-
     storeCookiesFromResponse(loginRes);
+    await loginRes.text();
 
-    // Check if login was successful by looking for auth cookies
-    const hasAuth =
-      cookieJar['remix_userid'] ||
-      cookieJar['remix_userkey'] ||
-      cookieJar['logged_in'] ||
-      cookieJar['session'];
-
-    // Follow the redirect if any
-    const location = loginRes.headers.get('location');
-    if (location) {
-      const followRes = await fetch(
-        location.startsWith('http') ? location : `${ZLIB_BASE}${location}`,
-        {
-          headers: {
-            'User-Agent': USER_AGENT,
-            Cookie: getCookieHeader(),
-          },
-          redirect: 'follow',
-        }
-      );
-      storeCookiesFromResponse(followRes);
-      const html = await followRes.text();
-
-      // Check if we're on a logged-in page
-      const isLoggedIn =
-        html.includes('logout') ||
-        html.includes('mybooks') ||
-        html.includes('profile') ||
-        !html.includes('loginForm');
-
-      if (isLoggedIn || hasAuth) {
-        isAuthenticated = true;
-        authEmail = email;
-        console.log('[Auth] Login successful for:', email);
-        console.log('[Auth] Cookie names:', Object.keys(cookieJar).join(', '));
-        return { success: true, message: 'Login successful' };
-      }
-    }
-
-    // If we got auth cookies directly (no redirect)
-    if (hasAuth) {
+    // Step 3: Check for auth cookies
+    if (hasAuthCookies()) {
       isAuthenticated = true;
       authEmail = email;
       console.log('[Auth] Login successful for:', email);
       return { success: true, message: 'Login successful' };
     }
 
-    // Login might still work with just the bsrv cookie for downloads
-    // Check if we have any new cookies
-    if (Object.keys(cookieJar).length > 1) {
-      isAuthenticated = true;
-      authEmail = email;
-      console.log('[Auth] Login completed (session cookies set) for:', email);
-      return { success: true, message: 'Login completed - session cookies set' };
-    }
-
-    return { success: false, message: 'Login failed - no auth cookies received' };
+    return { success: false, message: 'Login failed — invalid email or password' };
   } catch (err) {
     console.error('[Auth] Login error:', err.message);
     return { success: false, message: `Login error: ${err.message}` };
@@ -192,27 +143,20 @@ async function login(email, password) {
 
 /**
  * Manually set cookies
- * @param {string} cookieStr - Cookie string like "name1=val1; name2=val2"
  */
 function setCookies(cookieStr) {
   parseCookieString(cookieStr);
-  isAuthenticated = Object.keys(cookieJar).length > 0;
-  console.log('[Auth] Cookies updated:', Object.keys(cookieJar).join(', '));
+  isAuthenticated = hasAuthCookies();
+  console.log('[Auth] Cookies set:', Object.keys(cookieJar).join(', '));
+  return isAuthenticated;
 }
 
-/**
- * Clear all cookies
- */
 function clearCookies() {
   cookieJar = {};
   isAuthenticated = false;
   authEmail = '';
-  console.log('[Auth] Cookies cleared');
 }
 
-/**
- * Get auth status
- */
 function getStatus() {
   return {
     authenticated: isAuthenticated,
@@ -222,7 +166,6 @@ function getStatus() {
   };
 }
 
-// Initialize from env on module load
 initFromEnv();
 
 module.exports = {
@@ -232,8 +175,6 @@ module.exports = {
   setCookies,
   clearCookies,
   getStatus,
-  initFromEnv,
-  get isAuthenticated() {
-    return isAuthenticated;
-  },
+  hasAuthCookies,
+  get isAuthenticated() { return isAuthenticated; },
 };

@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Z-Library OPDS Bridge</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
+</head>
+<body>
+  <!-- Sidebar Navigation -->
+  <nav id="sidebar">
+    <div class="sidebar-header">
+      <h1>📚 ZLib OPDS</h1>
+      <span class="version">v3.0</span>
+    </div>
+
+    <div class="nav-links">
+      <a href="#" class="nav-item active" data-page="search">
+        <span class="nav-icon">🔍</span> Search
+      </a>
+      <a href="#" class="nav-item" data-page="library">
+        <span class="nav-icon">📖</span> My Library
+      </a>
+      <a href="#" class="nav-item" data-page="downloads">
+        <span class="nav-icon">⬇️</span> Downloads
+      </a>
+      <a href="#" class="nav-item" data-page="settings">
+        <span class="nav-icon">⚙️</span> Settings
+      </a>
+    </div>
+
+    <div class="sidebar-footer">
+      <div id="authBadge" class="auth-badge disconnected">
+        <span class="status-dot"></span>
+        <span id="authLabel">Not Connected</span>
+      </div>
+      <div id="mirrorBadge" class="mirror-info">
+        <span class="mirror-label">Mirror:</span>
+        <span id="currentMirror">z-lib.fm</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Content -->
+  <main id="content">
+    <!-- Search Page -->
+    <section id="page-search" class="page active">
+      <div class="page-header">
+        <h2>Search Z-Library</h2>
+      </div>
+      <form id="searchForm" class="search-bar">
+        <input type="text" id="searchInput" placeholder="Search books, authors, ISBN..." autocomplete="off" />
+        <button type="submit">Search</button>
+      </form>
+      <div id="searchStatus" class="status-bar hidden"></div>
+      <div id="searchResults" class="book-grid"></div>
+      <div id="searchPagination" class="pagination hidden"></div>
+    </section>
+
+    <!-- Library Page -->
+    <section id="page-library" class="page">
+      <div class="page-header">
+        <h2>My Library</h2>
+        <div class="tab-bar">
+          <button class="tab active" data-status="">All</button>
+          <button class="tab" data-status="favorite">Favorites</button>
+          <button class="tab" data-status="reading">Reading</button>
+          <button class="tab" data-status="finished">Finished</button>
+          <button class="tab" data-status="want-to-read">Want to Read</button>
+        </div>
+      </div>
+      <div id="libraryBooks" class="book-grid"></div>
+      <div id="libraryEmpty" class="empty-state hidden">
+        <span class="empty-icon">📚</span>
+        <p>Your library is empty</p>
+        <p class="empty-sub">Search and add books to start building your collection</p>
+      </div>
+    </section>
+
+    <!-- Downloads Page -->
+    <section id="page-downloads" class="page">
+      <div class="page-header">
+        <h2>Download History</h2>
+      </div>
+      <div id="downloadStats" class="stats-row"></div>
+      <div id="downloadHistory" class="download-list"></div>
+      <div id="downloadsEmpty" class="empty-state hidden">
+        <span class="empty-icon">⬇️</span>
+        <p>No downloads yet</p>
+      </div>
+    </section>
+
+    <!-- Settings Page -->
+    <section id="page-settings" class="page">
+      <div class="page-header">
+        <h2>Settings</h2>
+      </div>
+
+      <!-- Auth Section -->
+      <div class="settings-card">
+        <h3>Z-Library Account</h3>
+        <p class="settings-desc">Login to increase download limit from 5/day to 10/day. Add a Telegram bot for 20/day.</p>
+        <div id="authSection">
+          <div id="authLoggedOut">
+            <form id="loginForm" class="settings-form">
+              <div class="form-row">
+                <input type="email" id="loginEmail" placeholder="Z-Library email" required />
+                <input type="password" id="loginPassword" placeholder="Password" required />
+                <button type="submit" id="loginBtn">Login</button>
+              </div>
+            </form>
+            <details class="cookie-details">
+              <summary>Or paste cookies manually</summary>
+              <form id="cookieForm" class="settings-form">
+                <div class="form-row">
+                  <input type="text" id="cookieInput" placeholder="remix_userid=123; remix_userkey=abc; ..." style="flex:3" />
+                  <button type="submit">Set Cookies</button>
+                </div>
+              </form>
+            </details>
+          </div>
+          <div id="authLoggedIn" class="hidden">
+            <div class="auth-info">
+              <span class="auth-check">✅</span>
+              <div>
+                <strong id="authEmailDisplay"></strong>
+                <p class="text-muted" id="authCookieInfo"></p>
+              </div>
+              <button id="logoutBtn" class="btn-danger">Logout</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mirror Section -->
+      <div class="settings-card">
+        <h3>Z-Library Mirrors</h3>
+        <p class="settings-desc">Server auto-rotates mirrors when one is rate-limited. You can also select manually.</p>
+        <div id="mirrorList" class="mirror-list"></div>
+      </div>
+
+      <!-- Proxy Section -->
+      <div class="settings-card">
+        <h3>Proxy (Optional)</h3>
+        <p class="settings-desc">Route z-lib requests through an HTTP or SOCKS5 proxy to bypass IP-based limits.</p>
+        <form id="proxyForm" class="settings-form">
+          <div class="form-row">
+            <input type="text" id="proxyUrl" placeholder="http://user:pass@host:port or socks5://host:port" style="flex:3" />
+            <button type="submit">Set Proxy</button>
+            <button type="button" id="clearProxyBtn" class="btn-secondary">Clear</button>
+          </div>
+        </form>
+        <div id="proxyStatus" class="text-muted"></div>
+      </div>
+
+      <!-- OPDS Info -->
+      <div class="settings-card">
+        <h3>OPDS Feed</h3>
+        <p class="settings-desc">Add this URL to Readest or any OPDS-compatible e-reader app.</p>
+        <div class="opds-url-box">
+          <code id="opdsUrlDisplay"></code>
+          <button id="copyOpdsBtn">Copy</button>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="settings-card">
+        <h3>Statistics</h3>
+        <div id="statsGrid" class="stats-grid"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Book Detail Modal -->
+  <div id="bookModal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <button class="modal-close">&times;</button>
+      <div id="bookDetail"></div>
+    </div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
