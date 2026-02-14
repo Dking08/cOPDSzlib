@@ -190,6 +190,7 @@ function bookEntry({ book, baseUrl, now, formats }) {
     ${book.publisher ? `<dc:publisher>${escapeXml(book.publisher)}</dc:publisher>` : ''}
     ${book.language ? `<dc:language>${escapeXml(book.language)}</dc:language>` : ''}
     ${book.year && book.year !== '0' ? `<dc:date>${escapeXml(book.year)}</dc:date>` : ''}
+    ${book.extension ? `<dc:format>${escapeXml(book.extension.toLowerCase())}</dc:format>` : ''}
     ${coverProxy ? `<link rel="http://opds-spec.org/image" href="${coverProxy}" type="image/jpeg" />` : ''}
     ${coverProxy ? `<link rel="http://opds-spec.org/image/thumbnail" href="${coverProxy}" type="image/jpeg" />` : ''}
     <link rel="http://opds-spec.org/acquisition"
@@ -197,7 +198,7 @@ function bookEntry({ book, baseUrl, now, formats }) {
           type="${mainMime}"
           title="Download ${escapeXml(book.extension.toUpperCase())} (${escapeXml(book.filesize)})" />
 ${formatLinks}
-  </entry>`;
+</entry>`;
 }
 
 /**
