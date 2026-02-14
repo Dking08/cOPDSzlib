@@ -5,7 +5,7 @@ const {
   fetchSearchPage,
   parseSearchResults,
   fetchDownload,
-  fetchBookFormats,
+  fetchBookDetails,
   fetchCover,
   getMirror,
   getMirrorStatus,
@@ -13,6 +13,7 @@ const {
   setProxy,
   getProxyStatus,
   MIRRORS,
+  LIBGEN_BASE,
 } = require('./src/scraper');
 const {
   rootCatalog,
@@ -53,23 +54,18 @@ app.use((req, _res, next) => {
 app.get('/api/info', (_req, res) => {
   const stats = lib.getStats();
   res.json({
-    name: 'Readest Z-Library OPDS Bridge',
-    version: '3.0.0',
+    name: 'Readest LibGen OPDS Bridge',
+    version: '4.0.0',
+    source: 'Library Genesis (libgen.li) — no download limits!',
     frontend: `${BASE_URL}/`,
     opds: `${BASE_URL}/opds`,
     dashboard: `${BASE_URL}/dashboard`,
     api: {
       search: `${BASE_URL}/api/search?q={query}`,
       library: `${BASE_URL}/api/library`,
-      formats: `${BASE_URL}/api/formats/{bookId}`,
-      mirrors: `${BASE_URL}/api/mirrors`,
+      details: `${BASE_URL}/api/book/{bookId}/details`,
       proxy: `${BASE_URL}/api/proxy`,
       stats: `${BASE_URL}/api/stats`,
-    },
-    auth: {
-      status: `${BASE_URL}/api/auth/status`,
-      login: `${BASE_URL}/api/auth/login`,
-      cookies: `${BASE_URL}/api/auth/cookies`,
     },
     stats: {
       books_tracked: stats.totalBooks,
@@ -113,8 +109,8 @@ app.get('/opds/search', async (req, res) => {
   try {
     console.log(`[Search] query="${query}" page=${page}`);
     const html = await fetchSearchPage(query, page);
-    const books = parseSearchResults(html);
-    console.log(`[Search] Found ${books.length} results`);
+    const { books, totalPages } = parseSearchResults(html);
+    console.log(`[Search] Found ${books.length} results (page ${page}/${totalPages})`);
 
     // Log search & cache books in DB
     lib.logSearch(query, books.length);
@@ -123,32 +119,27 @@ app.get('/opds/search', async (req, res) => {
     }
 
     res.set('Content-Type', OPDS_ACQ_MIME);
-    res.send(searchResultsFeed({ baseUrl: BASE_URL, query, books, page }));
+    res.send(searchResultsFeed({ baseUrl: BASE_URL, query, books, page, totalPages }));
   } catch (err) {
     console.error('[Search Error]', err.message);
     res.status(502).set('Content-Type', 'text/plain').send(`Search failed: ${err.message}`);
   }
 });
 
-// ─── Book Formats (OPDS) ─────────────────────────────────────
+// ─── Book Details (OPDS) ──────────────────────────────────────
 
-app.get('/opds/book/:bookId/formats', async (req, res) => {
+app.get('/opds/book/:bookId/details', async (req, res) => {
   const { bookId } = req.params;
-
   try {
-    const formats = await fetchBookFormats(bookId);
     let book = lib.getBook(bookId);
-
     if (!book) {
-      // Minimal fallback if book not in DB
       book = { id: bookId, title: 'Book ' + bookId, author: '', extension: '', filesize: '', download: '' };
     }
-
     res.set('Content-Type', OPDS_ACQ_MIME);
-    res.send(bookFormatsFeed({ baseUrl: BASE_URL, book, formats }));
+    res.send(searchResultsFeed({ baseUrl: BASE_URL, query: book.title, books: [book], page: 1 }));
   } catch (err) {
-    console.error('[Formats Error]', err.message);
-    res.status(502).send(`Formats fetch failed: ${err.message}`);
+    console.error('[Details Error]', err.message);
+    res.status(502).send(`Details fetch failed: ${err.message}`);
   }
 });
 
@@ -205,38 +196,28 @@ app.get('/opds/library/:status', (req, res) => {
 
 // ─── Download Proxy ───────────────────────────────────────────
 
-app.get('/opds/download/dl/:code', async (req, res) => {
-  const dlPath = `/dl/${req.params.code}`;
+app.get('/libgen/dl/:md5', async (req, res) => {
+  const md5 = req.params.md5;
   const ext = req.query.ext || 'epub';
-  const bookId = req.query.id || '';
+  const bookId = req.query.id || md5;
 
   try {
-    console.log(`[Download] ${dlPath} (book: ${bookId})`);
-
-    // Auto-refresh session before downloading
-    await auth.ensureSession();
+    console.log(`[Download] md5=${md5} (book: ${bookId})`);
 
     // Log download in history
-    if (bookId) {
-      const book = lib.getBook(bookId);
-      if (book) {
-        lib.logDownload({ ...book, download: dlPath });
-        lib.addToLibrary(bookId, 'downloaded');
-      } else {
-        lib.logDownload({ id: bookId, title: 'Unknown', dl_path: dlPath, extension: ext });
-      }
+    const book = lib.getBook(bookId);
+    if (book) {
+      lib.logDownload({ ...book, download: `/libgen/dl/${md5}` });
+      lib.addToLibrary(bookId, 'downloaded');
+    } else {
+      lib.logDownload({ id: bookId, title: 'Unknown', dl_path: `/libgen/dl/${md5}`, extension: ext });
     }
 
-    const upstream = await fetchDownload(dlPath);
+    const upstream = await fetchDownload(md5);
 
-    // Check for download errors (rate limit, auth required, etc.)
     if (upstream.error) {
       console.error(`[Download Error] ${upstream.error}`);
-      const statusCode = upstream.error.includes('Authentication') ? 401 : 429;
-      return res.status(statusCode).json({
-        error: upstream.error,
-        help: 'Configure z-lib cookies via POST /api/auth/cookies or login via POST /api/auth/login',
-      });
+      return res.status(502).json({ error: upstream.error });
     }
 
     const response = upstream.response;
@@ -254,7 +235,6 @@ app.get('/opds/download/dl/:code', async (req, res) => {
     }
     if (contentLen) res.set('Content-Length', contentLen);
 
-    // Track successful download
     auth.trackDownload();
 
     const readable = Readable.fromWeb(response.body);
@@ -301,10 +281,10 @@ app.get('/api/search', async (req, res) => {
   try {
     console.log(`[API Search] query="${query}" page=${page}`);
     const html = await fetchSearchPage(query, page);
-    const books = parseSearchResults(html);
+    const { books, totalPages } = parseSearchResults(html);
     lib.logSearch(query, books.length);
     for (const book of books) lib.upsertBook(book);
-    res.json({ books, page, count: books.length });
+    res.json({ books, page, totalPages, count: books.length });
   } catch (err) {
     console.error('[API Search Error]', err.message);
     res.status(502).json({ error: err.message, books: [] });
@@ -358,54 +338,11 @@ app.post('/api/proxy', async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-//  AUTH API
+//  STATUS API  (LibGen needs no auth)
 // ═══════════════════════════════════════════════════════════════
 
 app.get('/api/auth/status', (_req, res) => {
   res.json(auth.getStatus());
-});
-
-app.post('/api/auth/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'email and password required' });
-  }
-  const result = await auth.login(email, password);
-  res.json(result);
-});
-
-// ─── Registration (2-step) ────────────────────────────────────
-
-app.post('/api/auth/send-code', async (req, res) => {
-  const { email, password, name } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ error: 'email and password required' });
-  }
-  const result = await auth.sendVerificationCode(email, password, name || 'User');
-  res.json(result);
-});
-
-app.post('/api/auth/register', async (req, res) => {
-  const { email, password, name, code } = req.body;
-  if (!email || !password || !code) {
-    return res.status(400).json({ error: 'email, password, and code required' });
-  }
-  const result = await auth.register(email, password, name || 'User', code);
-  res.json(result);
-});
-
-app.post('/api/auth/cookies', (req, res) => {
-  const { cookies } = req.body;
-  if (!cookies) {
-    return res.status(400).json({ error: 'cookies string required (e.g. "remix_userid=123; remix_userkey=abc")' });
-  }
-  auth.setCookies(cookies);
-  res.json({ success: true, ...auth.getStatus() });
-});
-
-app.post('/api/auth/logout', (_req, res) => {
-  auth.clearCookies();
-  res.json({ success: true, message: 'Cookies cleared' });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -414,10 +351,10 @@ app.post('/api/auth/logout', (_req, res) => {
 
 // ─── Get all formats for a book ───────────────────────────────
 
-app.get('/api/formats/:bookId', async (req, res) => {
+app.get('/api/book/:bookId/details', async (req, res) => {
   try {
-    const formats = await fetchBookFormats(req.params.bookId);
-    res.json({ success: true, bookId: req.params.bookId, formats });
+    const details = await fetchBookDetails(req.params.bookId);
+    res.json({ success: true, ...details });
   } catch (err) {
     res.status(502).json({ success: false, error: err.message });
   }
@@ -485,8 +422,6 @@ app.get('/api/history/searches', (req, res) => {
 app.get('/dashboard', (_req, res) => {
   const stats = lib.getStats();
   const recentSearches = lib.getRecentSearches(10);
-  const authStatus = auth.getStatus();
-
   const statusBadge = (s) => {
     const colors = { downloaded: '#3b82f6', reading: '#f59e0b', finished: '#10b981', 'want-to-read': '#8b5cf6', favorite: '#ef4444' };
     return `<span style="background:${colors[s] || '#6b7280'};color:#fff;padding:2px 8px;border-radius:12px;font-size:12px">${s}</span>`;
@@ -530,7 +465,7 @@ app.get('/dashboard', (_req, res) => {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Z-Library OPDS Dashboard</title>
+  <title>LibGen OPDS Dashboard</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
@@ -561,8 +496,8 @@ app.get('/dashboard', (_req, res) => {
 </head>
 <body>
   <div class="container">
-    <h1>Z-Library OPDS Bridge</h1>
-    <p class="subtitle">Your personal bridge between Readest and Z-Library</p>
+    <h1>LibGen OPDS Bridge</h1>
+    <p class="subtitle">Your personal bridge between Readest and Library Genesis — unlimited downloads!</p>
 
     <div class="opds-url">
       <span style="color:#94a3b8">OPDS Feed:</span>
@@ -570,29 +505,9 @@ app.get('/dashboard', (_req, res) => {
       <button onclick="navigator.clipboard.writeText(document.getElementById('opdsUrl').textContent)">Copy</button>
     </div>
 
-    <div class="section" style="border-color:${authStatus.authenticated ? '#10b981' : '#ef4444'}">
-      <h2>Z-Library Auth ${authStatus.authenticated ? '<span style="color:#10b981">● Connected</span>' : '<span style="color:#ef4444">● Not Connected</span>'}</h2>
-      ${authStatus.authenticated
-        ? `<p style="color:#94a3b8;margin-bottom:12px">Logged in${authStatus.email ? ' as <strong>' + authStatus.email + '</strong>' : ''}. Cookies: ${authStatus.cookieNames.join(', ')}</p>
-           <button onclick="fetch('/api/auth/logout',{method:'POST'}).then(()=>location.reload())" style="background:#ef4444;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">Logout</button>`
-        : `<p style="color:#94a3b8;margin-bottom:12px">Login to bypass download limits (5/day anonymous limit)</p>
-           <form onsubmit="event.preventDefault();fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:this.email.value,password:this.password.value})}).then(r=>r.json()).then(d=>{alert(d.message||d.error);if(d.success)location.reload()})">
-             <div style="display:flex;gap:8px;flex-wrap:wrap">
-               <input name="email" type="email" placeholder="Z-Library email" style="flex:1;min-width:200px;padding:8px 12px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0" required />
-               <input name="password" type="password" placeholder="Password" style="flex:1;min-width:200px;padding:8px 12px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0" required />
-               <button type="submit" style="background:#3b82f6;color:#fff;border:none;padding:8px 20px;border-radius:6px;cursor:pointer">Login</button>
-             </div>
-           </form>
-           <details style="margin-top:12px">
-             <summary style="color:#94a3b8;cursor:pointer;font-size:13px">Or paste cookies manually</summary>
-             <form onsubmit="event.preventDefault();fetch('/api/auth/cookies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookies:this.cookies.value})}).then(r=>r.json()).then(d=>{alert(d.authenticated?'Cookies set!':d.error);if(d.authenticated)location.reload()})" style="margin-top:8px">
-               <div style="display:flex;gap:8px">
-                 <input name="cookies" placeholder="remix_userid=123; remix_userkey=abc; ..." style="flex:1;padding:8px 12px;border-radius:6px;border:1px solid #334155;background:#0f172a;color:#e2e8f0;font-family:monospace;font-size:12px" required />
-                 <button type="submit" style="background:#8b5cf6;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer">Set</button>
-               </div>
-             </form>
-           </details>`
-      }
+    <div class="section" style="border-color:#10b981">
+      <h2>Source: Library Genesis <span style="color:#10b981">● No Limits</span></h2>
+      <p style="color:#94a3b8">Downloads: ${auth.getDownloadCount()} today — no authentication required, no rate limits!</p>
     </div>
 
     <div class="stats-grid">
@@ -676,7 +591,7 @@ app.get('/dashboard', (_req, res) => {
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════════════╗
-║          Readest Z-Library OPDS Bridge v3.0                 ║
+║         Readest LibGen OPDS Bridge v4.0                     ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  Server:     http://localhost:${String(PORT).padEnd(27)}    ║
@@ -687,8 +602,8 @@ app.listen(PORT, () => {
 ║  Features:                                                   ║
 ║    - Web frontend (search, library, downloads, settings)     ║
 ║    - Multi-format downloads (epub, pdf, mobi, azw3...)       ║
-║    - Z-Library auth (login or paste cookies)                  ║
-║    - Mirror rotation (${MIRRORS.length} mirrors) + proxy support               ║
+║    - Library Genesis — NO download limits!                    ║
+║    - Proxy support for restricted regions                    ║
 ║    - Personal library tracking                               ║
 ║    - Download & search history                               ║
 ║    - OPDS feed for e-reader apps                             ║

@@ -1,5 +1,5 @@
 /**
- * Z-Library OPDS Bridge – Frontend SPA
+ * LibGen OPDS Bridge – Frontend SPA
  */
 
 // ── State ────────────────────────────────────────────────────
@@ -14,7 +14,7 @@ const state = {
   libraryTotal: 0,
   downloads: [],
   downloadsTotal: 0,
-  auth: { authenticated: false, email: '', cookieNames: [] },
+  auth: { source: 'Library Genesis' },
   mirrors: [],
   proxy: { enabled: false, type: null },
   stats: {},
@@ -198,217 +198,19 @@ async function loadDownloads() {
 // ══════════════════════════════════════════════════════════════
 
 async function loadSettings() {
-  await Promise.all([loadAuthStatus(), loadMirrors(), loadProxyStatus(), loadStats()]);
+  await Promise.all([loadDownloadStatus(), loadProxyStatus(), loadStats()]);
   updateOpdsUrl();
 }
 
-async function loadAuthStatus() {
+async function loadDownloadStatus() {
   try {
     const data = await API.get('/api/auth/status');
     state.auth = data;
-    renderAuthUI();
-    updateSidebarAuth();
+    const el = document.getElementById('downloadStats');
+    if (el && data.downloads) {
+      el.textContent = `Downloads today: ${data.downloads.today} (${data.downloads.limit})`;
+    }
   } catch (err) { /* ignore */ }
-}
-
-function renderAuthUI() {
-  const loggedIn = document.getElementById('authLoggedIn');
-  const loggedOut = document.getElementById('authLoggedOut');
-
-  if (state.auth.authenticated) {
-    loggedIn.classList.remove('hidden');
-    loggedOut.classList.add('hidden');
-    document.getElementById('authEmailDisplay').textContent = state.auth.email || 'Authenticated';
-    document.getElementById('authCookieInfo').textContent = `Cookies: ${(state.auth.cookieNames || []).join(', ')}`;
-
-    // Download quota info
-    const dlInfo = document.getElementById('authDownloadInfo');
-    if (state.auth.downloads) {
-      const d = state.auth.downloads;
-      dlInfo.textContent = `Downloads today: ${d.today} / ${d.limit} (${d.remaining} remaining)`;
-    } else {
-      dlInfo.textContent = '';
-    }
-  } else {
-    loggedIn.classList.add('hidden');
-    loggedOut.classList.remove('hidden');
-  }
-}
-
-function updateSidebarAuth() {
-  const badge = document.getElementById('authBadge');
-  const label = document.getElementById('authLabel');
-  if (state.auth.authenticated) {
-    badge.className = 'auth-badge connected';
-    label.textContent = state.auth.email || 'Connected';
-  } else {
-    badge.className = 'auth-badge disconnected';
-    label.textContent = 'Not Connected';
-  }
-}
-
-// Auth tab switching
-function switchAuthTab(tab) {
-  document.querySelectorAll('.auth-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
-  document.getElementById('authTabLogin').classList.toggle('active', tab === 'login');
-  document.getElementById('authTabRegister').classList.toggle('active', tab === 'register');
-}
-
-async function handleLogin(e) {
-  e.preventDefault();
-  const email = document.getElementById('loginEmail').value;
-  const password = document.getElementById('loginPassword').value;
-  const btn = document.getElementById('loginBtn');
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>';
-
-  try {
-    const result = await API.post('/api/auth/login', { email, password });
-    if (result.success) {
-      toast('Login successful!', 'success');
-      await loadAuthStatus();
-    } else {
-      toast(result.message || 'Login failed', 'error');
-    }
-  } catch (err) {
-    toast('Login error: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Login';
-  }
-}
-
-// Registration Step 1: Send verification code
-async function handleRegSendCode(e) {
-  e.preventDefault();
-  const email = document.getElementById('regEmail').value;
-  const password = document.getElementById('regPassword').value;
-  const name = document.getElementById('regName').value || 'User';
-  const btn = document.getElementById('regSendCodeBtn');
-
-  if (password.length < 6) {
-    toast('Password must be at least 6 characters', 'error');
-    return;
-  }
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>';
-
-  try {
-    const result = await API.post('/api/auth/send-code', { email, password, name });
-    if (result.success) {
-      toast('Verification code sent! Check your email.', 'success');
-      document.getElementById('regEmailDisplay').textContent = email;
-      document.getElementById('regStep1').classList.add('hidden');
-      document.getElementById('regStep2').classList.remove('hidden');
-      document.getElementById('regCode').focus();
-    } else {
-      toast(result.message || 'Failed to send code', 'error');
-    }
-  } catch (err) {
-    toast('Error: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Send Code';
-  }
-}
-
-// Registration Step 2: Verify code and complete registration
-async function handleRegister(e) {
-  e.preventDefault();
-  const email = document.getElementById('regEmail').value;
-  const password = document.getElementById('regPassword').value;
-  const name = document.getElementById('regName').value || 'User';
-  const code = document.getElementById('regCode').value;
-  const btn = document.getElementById('regVerifyBtn');
-
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>';
-
-  try {
-    const result = await API.post('/api/auth/register', { email, password, name, code });
-    if (result.success) {
-      toast('Account created & logged in!', 'success');
-      await loadAuthStatus();
-    } else {
-      toast(result.message || 'Registration failed', 'error');
-    }
-  } catch (err) {
-    toast('Error: ' + err.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Verify & Register';
-  }
-}
-
-function regGoBack() {
-  document.getElementById('regStep2').classList.add('hidden');
-  document.getElementById('regStep1').classList.remove('hidden');
-}
-
-async function handleCookies(e) {
-  e.preventDefault();
-  const cookies = document.getElementById('cookieInput').value;
-  try {
-    const result = await API.post('/api/auth/cookies', { cookies });
-    if (result.authenticated) {
-      toast('Cookies set successfully!', 'success');
-      await loadAuthStatus();
-    } else {
-      toast('Cookies set but no auth cookies detected', 'warning');
-    }
-  } catch (err) {
-    toast('Failed to set cookies: ' + err.message, 'error');
-  }
-}
-
-async function handleLogout() {
-  try {
-    await API.post('/api/auth/logout');
-    toast('Logged out', 'info');
-    await loadAuthStatus();
-  } catch (err) {
-    toast('Logout failed', 'error');
-  }
-}
-
-async function loadMirrors() {
-  try {
-    const data = await API.get('/api/mirrors');
-    state.mirrors = data.mirrors || [];
-    renderMirrors();
-    updateSidebarMirror();
-  } catch (err) { /* ignore */ }
-}
-
-function renderMirrors() {
-  const list = document.getElementById('mirrorList');
-  list.innerHTML = state.mirrors.map((m) => `
-    <div class="mirror-item ${m.active ? 'active' : ''}" onclick="selectMirror('${escAttr(m.url)}')">
-      <span class="mirror-dot"></span>
-      <span class="mirror-url">${escHtml(m.url)}</span>
-      ${m.fails > 0 ? `<span class="mirror-fails">${m.fails} fails</span>` : ''}
-      ${m.active ? '<span class="book-tag status">Active</span>' : ''}
-    </div>
-  `).join('');
-}
-
-function updateSidebarMirror() {
-  const active = state.mirrors.find((m) => m.active);
-  if (active) {
-    document.getElementById('currentMirror').textContent = active.url.replace('https://', '');
-  }
-}
-
-async function selectMirror(url) {
-  try {
-    await API.post('/api/mirrors', { url });
-    toast(`Mirror set to ${url}`, 'success');
-    await loadMirrors();
-  } catch (err) {
-    toast('Failed to set mirror', 'error');
-  }
 }
 
 async function loadProxyStatus() {
@@ -573,9 +375,9 @@ async function openBookModal(bookId) {
              </button>`
           : '<span class="text-muted">No direct download available</span>'
         }
-        <button class="btn" onclick="loadFormats('${escAttr(book.id)}')">📦 More Formats</button>
+        <button class="btn" onclick="loadBookDetails('${escAttr(book.id)}')">📋 More Details</button>
       </div>
-      <div id="formatsContainer-${bookId}"></div>
+      <div id="detailsContainer-${bookId}"></div>
     </div>
   `;
 
@@ -604,33 +406,41 @@ async function toggleLibraryStatus(bookId, status, add) {
   }
 }
 
-async function loadFormats(bookId) {
-  const container = document.getElementById(`formatsContainer-${bookId}`);
+async function loadBookDetails(bookId) {
+  const container = document.getElementById(`detailsContainer-${bookId}`);
   if (!container) return;
 
-  container.innerHTML = '<div style="padding:12px;color:var(--text-dim)"><span class="spinner"></span> Loading formats...</div>';
+  container.innerHTML = '<div style="padding:12px;color:var(--text-dim)"><span class="spinner"></span> Loading details...</div>';
 
   try {
-    const data = await API.get(`/api/formats/${bookId}`);
-    const formats = data.formats || [];
+    const data = await API.get(`/api/book/${encodeURIComponent(bookId)}/details`);
+    const details = data.details || {};
 
-    if (formats.length === 0) {
-      container.innerHTML = '<div style="padding:8px;color:var(--text-dim)">No additional formats found</div>';
+    const fields = [
+      details.description ? ['Description', details.description] : null,
+      details.isbn ? ['ISBN', details.isbn] : null,
+      details.series ? ['Series', details.series] : null,
+      details.edition ? ['Edition', details.edition] : null,
+      details.pages ? ['Pages', details.pages] : null,
+    ].filter(Boolean);
+
+    if (fields.length === 0) {
+      container.innerHTML = '<div style="padding:8px;color:var(--text-dim)">No additional details available</div>';
       return;
     }
 
     container.innerHTML = `
-      <div class="format-grid" style="margin-top:10px">
-        ${formats.map((f) => `
-          <button class="format-btn" onclick="downloadBook('${escAttr(bookId)}', '${escAttr(f.href)}', '${escAttr(f.extension)}')">
-            <span class="ext">${(f.extension || '').toUpperCase()}</span>
-            <span class="size">${f.filesizeString || f.filesize || ''}</span>
-          </button>
+      <div style="margin-top:10px;padding:12px;background:var(--card-bg);border-radius:8px">
+        ${fields.map(([label, value]) => `
+          <div style="margin-bottom:8px">
+            <strong style="color:var(--text-dim)">${label}:</strong>
+            <span>${escHtml(String(value))}</span>
+          </div>
         `).join('')}
       </div>
     `;
   } catch (err) {
-    container.innerHTML = `<div style="padding:8px;color:var(--danger)">Failed to load formats: ${err.message}</div>`;
+    container.innerHTML = `<div style="padding:8px;color:var(--danger)">Failed to load details: ${err.message}</div>`;
   }
 }
 
@@ -642,9 +452,8 @@ async function downloadBook(bookId, dlPath, ext) {
 
   toast('Starting download...', 'info');
 
-  // Build download URL
-  const code = dlPath.replace(/^\/dl\//, '');
-  const url = `/opds/download/dl/${code}?ext=${encodeURIComponent(ext)}&id=${encodeURIComponent(bookId)}`;
+  // Build download URL — dlPath is already the full route like /libgen/dl/<md5>
+  const url = `${dlPath}?ext=${encodeURIComponent(ext)}&id=${encodeURIComponent(bookId)}`;
 
   try {
     const res = await fetch(url);
@@ -723,21 +532,6 @@ document.addEventListener('DOMContentLoaded', () => {
     t.addEventListener('click', () => loadLibrary(t.dataset.status));
   });
 
-  // Auth
-  document.getElementById('loginForm').addEventListener('submit', handleLogin);
-  document.getElementById('cookieForm').addEventListener('submit', handleCookies);
-  document.getElementById('logoutBtn').addEventListener('click', handleLogout);
-
-  // Auth tabs
-  document.querySelectorAll('.auth-tab').forEach(t => {
-    t.addEventListener('click', () => switchAuthTab(t.dataset.tab));
-  });
-
-  // Registration
-  document.getElementById('regForm').addEventListener('submit', handleRegSendCode);
-  document.getElementById('regVerifyForm').addEventListener('submit', handleRegister);
-  document.getElementById('regBackBtn').addEventListener('click', regGoBack);
-
   // Proxy
   document.getElementById('proxyForm').addEventListener('submit', handleProxy);
   document.getElementById('clearProxyBtn').addEventListener('click', clearProxy);
@@ -753,6 +547,5 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Load initial state
-  loadAuthStatus();
-  loadMirrors();
+  loadSettings();
 });

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Z-Library OPDS Bridge</title>
+  <title>LibGen OPDS Bridge</title>
   <link rel="stylesheet" href="/css/style.css">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📚</text></svg>">
 </head>
@@ -11,8 +11,8 @@
   <!-- Sidebar Navigation -->
   <nav id="sidebar">
     <div class="sidebar-header">
-      <h1>📚 ZLib OPDS</h1>
-      <span class="version">v3.0</span>
+      <h1>📚 LibGen OPDS</h1>
+      <span class="version">v4.0</span>
     </div>
 
     <div class="nav-links">
@@ -31,13 +31,13 @@
     </div>
 
     <div class="sidebar-footer">
-      <div id="authBadge" class="auth-badge disconnected">
+      <div id="authBadge" class="auth-badge connected">
         <span class="status-dot"></span>
-        <span id="authLabel">Not Connected</span>
+        <span id="authLabel">Library Genesis</span>
       </div>
       <div id="mirrorBadge" class="mirror-info">
-        <span class="mirror-label">Mirror:</span>
-        <span id="currentMirror">z-lib.fm</span>
+        <span class="mirror-label">Source:</span>
+        <span id="currentMirror">libgen.li</span>
       </div>
     </div>
   </nav>
@@ -47,7 +47,7 @@
     <!-- Search Page -->
     <section id="page-search" class="page active">
       <div class="page-header">
-        <h2>Search Z-Library</h2>
+        <h2>Search Library Genesis</h2>
       </div>
       <form id="searchForm" class="search-bar">
         <input type="text" id="searchInput" placeholder="Search books, authors, ISBN..." autocomplete="off" />
@@ -97,93 +97,17 @@
         <h2>Settings</h2>
       </div>
 
-      <!-- Auth Section -->
+      <!-- Source Info -->
       <div class="settings-card">
-        <h3>Z-Library Account</h3>
-        <p class="settings-desc">Login or create an account to get 10 downloads/day (vs 5 anonymous). Credentials are stored locally for auto-refresh.</p>
-        <div id="authSection">
-          <div id="authLoggedOut">
-            <!-- Tab bar -->
-            <div class="auth-tabs">
-              <button class="auth-tab active" data-tab="login">Login</button>
-              <button class="auth-tab" data-tab="register">Create Account</button>
-            </div>
-
-            <!-- Login Tab -->
-            <div id="authTabLogin" class="auth-tab-content active">
-              <form id="loginForm" class="settings-form">
-                <div class="form-row">
-                  <input type="email" id="loginEmail" placeholder="Z-Library email" required />
-                  <input type="password" id="loginPassword" placeholder="Password" required />
-                  <button type="submit" id="loginBtn">Login</button>
-                </div>
-              </form>
-            </div>
-
-            <!-- Register Tab -->
-            <div id="authTabRegister" class="auth-tab-content">
-              <!-- Step 1: Enter details & send code -->
-              <div id="regStep1">
-                <form id="regForm" class="settings-form">
-                  <div class="form-row">
-                    <input type="email" id="regEmail" placeholder="Your email" required />
-                    <input type="password" id="regPassword" placeholder="Password (6+ chars)" required minlength="6" />
-                  </div>
-                  <div class="form-row" style="margin-top:8px">
-                    <input type="text" id="regName" placeholder="Nickname (optional)" />
-                    <button type="submit" id="regSendCodeBtn">Send Code</button>
-                  </div>
-                </form>
-                <p class="text-muted" style="font-size:12px;margin-top:4px">A 4-digit code will be sent to your email for verification.</p>
-              </div>
-              <!-- Step 2: Enter verification code -->
-              <div id="regStep2" class="hidden">
-                <p class="reg-step-msg">Enter the 4-digit code sent to <strong id="regEmailDisplay"></strong></p>
-                <form id="regVerifyForm" class="settings-form">
-                  <div class="form-row">
-                    <input type="text" id="regCode" placeholder="4-digit code" required maxlength="6" pattern="[0-9]{4,6}" style="max-width:160px;text-align:center;font-size:18px;letter-spacing:8px" />
-                    <button type="submit" id="regVerifyBtn">Verify & Register</button>
-                    <button type="button" id="regBackBtn" class="btn-secondary">Back</button>
-                  </div>
-                </form>
-              </div>
-            </div>
-
-            <details class="cookie-details">
-              <summary>Or paste cookies manually</summary>
-              <form id="cookieForm" class="settings-form">
-                <div class="form-row">
-                  <input type="text" id="cookieInput" placeholder="remix_userid=123; remix_userkey=abc; ..." style="flex:3" />
-                  <button type="submit">Set Cookies</button>
-                </div>
-              </form>
-            </details>
-          </div>
-          <div id="authLoggedIn" class="hidden">
-            <div class="auth-info">
-              <span class="auth-check">✅</span>
-              <div>
-                <strong id="authEmailDisplay"></strong>
-                <p class="text-muted" id="authCookieInfo"></p>
-                <p class="text-muted" id="authDownloadInfo"></p>
-              </div>
-              <button id="logoutBtn" class="btn-danger">Logout</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Mirror Section -->
-      <div class="settings-card">
-        <h3>Z-Library Mirrors</h3>
-        <p class="settings-desc">Server auto-rotates mirrors when one is rate-limited. You can also select manually.</p>
-        <div id="mirrorList" class="mirror-list"></div>
+        <h3>Book Source</h3>
+        <p class="settings-desc">✅ Library Genesis (libgen.li) — no authentication required, no download limits!</p>
+        <div id="downloadStats" class="text-muted" style="margin-top:8px"></div>
       </div>
 
       <!-- Proxy Section -->
       <div class="settings-card">
         <h3>Proxy (Optional)</h3>
-        <p class="settings-desc">Route z-lib requests through an HTTP or SOCKS5 proxy to bypass IP-based limits.</p>
+        <p class="settings-desc">Route requests through an HTTP or SOCKS5 proxy if libgen.li is blocked in your region.</p>
         <form id="proxyForm" class="settings-form">
           <div class="form-row">
             <input type="text" id="proxyUrl" placeholder="http://user:pass@host:port or socks5://host:port" style="flex:3" />

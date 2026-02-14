@@ -1,7 +1,7 @@
 {
-  "name": "readest-zlib-opds",
-  "version": "1.0.0",
-  "description": "OPDS catalog server bridging Readest to Z-Library",
+  "name": "readest-libgen-opds",
+  "version": "4.0.0",
+  "description": "OPDS catalog server bridging Readest to Library Genesis",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

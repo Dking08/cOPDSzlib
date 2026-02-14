@@ -29,7 +29,7 @@ function initSchema() {
   db.exec(`
     -- Books we've seen / downloaded
     CREATE TABLE IF NOT EXISTS books (
-      id           TEXT PRIMARY KEY,   -- z-lib book ID
+      id           TEXT PRIMARY KEY,   -- book MD5 hash
       title        TEXT NOT NULL,
       author       TEXT DEFAULT '',
       isbn         TEXT DEFAULT '',

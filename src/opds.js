@@ -42,9 +42,9 @@ function rootCatalog(baseUrl) {
 <feed xmlns="http://www.w3.org/2005/Atom"
       xmlns:opds="http://opds-spec.org/2010/catalog">
 
-  <id>urn:readest-zlib-opds:root</id>
-  <title>Z-Library OPDS</title>
-  <subtitle>Search and download books from Z-Library via OPDS</subtitle>
+  <id>urn:readest-libgen-opds:root</id>
+  <title>LibGen OPDS</title>
+  <subtitle>Search and download books from Library Genesis via OPDS — no limits!</subtitle>
   <updated>${now}</updated>
   <author>
     <name>Readest OPDS Bridge</name>
@@ -63,7 +63,7 @@ function rootCatalog(baseUrl) {
         type="${SEARCH_MIME}" />
 
   <entry>
-    <id>urn:readest-zlib-opds:library</id>
+    <id>urn:readest-libgen-opds:library</id>
     <title>My Library</title>
     <content type="text">All books you&apos;ve saved to your library</content>
     <updated>${now}</updated>
@@ -73,7 +73,7 @@ function rootCatalog(baseUrl) {
   </entry>
 
   <entry>
-    <id>urn:readest-zlib-opds:favorites</id>
+    <id>urn:readest-libgen-opds:favorites</id>
     <title>Favorites</title>
     <content type="text">Your favorited books</content>
     <updated>${now}</updated>
@@ -83,7 +83,7 @@ function rootCatalog(baseUrl) {
   </entry>
 
   <entry>
-    <id>urn:readest-zlib-opds:reading</id>
+    <id>urn:readest-libgen-opds:reading</id>
     <title>Currently Reading</title>
     <content type="text">Books you&apos;re currently reading</content>
     <updated>${now}</updated>
@@ -93,7 +93,7 @@ function rootCatalog(baseUrl) {
   </entry>
 
   <entry>
-    <id>urn:readest-zlib-opds:finished</id>
+    <id>urn:readest-libgen-opds:finished</id>
     <title>Finished</title>
     <content type="text">Books you&apos;ve finished reading</content>
     <updated>${now}</updated>
@@ -103,7 +103,7 @@ function rootCatalog(baseUrl) {
   </entry>
 
   <entry>
-    <id>urn:readest-zlib-opds:want-to-read</id>
+    <id>urn:readest-libgen-opds:want-to-read</id>
     <title>Want to Read</title>
     <content type="text">Books on your reading wishlist</content>
     <updated>${now}</updated>
@@ -113,7 +113,7 @@ function rootCatalog(baseUrl) {
   </entry>
 
   <entry>
-    <id>urn:readest-zlib-opds:downloads</id>
+    <id>urn:readest-libgen-opds:downloads</id>
     <title>Download History</title>
     <content type="text">All books you&apos;ve downloaded</content>
     <updated>${now}</updated>
@@ -131,8 +131,8 @@ function rootCatalog(baseUrl) {
 function openSearchDescription(baseUrl) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
-  <ShortName>Z-Library</ShortName>
-  <Description>Search Z-Library books</Description>
+  <ShortName>LibGen</ShortName>
+  <Description>Search Library Genesis books</Description>
   <InputEncoding>UTF-8</InputEncoding>
   <OutputEncoding>UTF-8</OutputEncoding>
   <Url type="${OPDS_ACQ_MIME}"
@@ -145,7 +145,7 @@ function openSearchDescription(baseUrl) {
  */
 function bookEntry({ book, baseUrl, now, formats }) {
   const mainMime = EXTENSION_MIME[book.extension] || 'application/octet-stream';
-  const dlUrl = `${baseUrl}/opds/download${book.download}?ext=${book.extension}&id=${book.id}`;
+  const dlUrl = `${baseUrl}${book.download}?ext=${book.extension}&id=${book.id}`;
   const coverProxy = book.coverUrl || book.cover_url
     ? `${baseUrl}/opds/cover?url=${encodeURIComponent(book.coverUrl || book.cover_url)}`
     : '';
@@ -179,7 +179,7 @@ function bookEntry({ book, baseUrl, now, formats }) {
 
   return `
   <entry>
-    <id>urn:zlib:book:${escapeXml(book.id)}</id>
+    <id>urn:libgen:book:${escapeXml(book.id)}</id>
     <title>${escapeXml(book.title)}</title>
     <author>
       <name>${escapeXml(book.author)}</name>
@@ -203,12 +203,12 @@ ${formatLinks}
 /**
  * Generate an OPDS acquisition feed from search results
  */
-function searchResultsFeed({ baseUrl, query, books, page }) {
+function searchResultsFeed({ baseUrl, query, books, page, totalPages }) {
   const now = new Date().toISOString();
   const encodedQuery = escapeXml(encodeURIComponent(query));
 
   const entries = books.map((book) => bookEntry({ book, baseUrl, now })).join('\n');
-  const nextPage = books.length >= 10 ? page + 1 : null;
+  const nextPage = (totalPages && page < totalPages) ? page + 1 : (books.length >= 10 ? page + 1 : null);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom"
@@ -216,11 +216,11 @@ function searchResultsFeed({ baseUrl, query, books, page }) {
       xmlns:opds="http://opds-spec.org/2010/catalog"
       xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
 
-  <id>urn:readest-zlib-opds:search:${encodedQuery}:${page}</id>
+  <id>urn:readest-libgen-opds:search:${encodedQuery}:${page}</id>
   <title>Search: ${escapeXml(query)}</title>
   <updated>${now}</updated>
   <author>
-    <name>Z-Library OPDS</name>
+    <name>LibGen OPDS</name>
   </author>
 
   <opensearch:totalResults>${books.length}</opensearch:totalResults>
@@ -261,11 +261,11 @@ function libraryFeed({ baseUrl, title, id, books, status }) {
       xmlns:dc="http://purl.org/dc/terms/"
       xmlns:opds="http://opds-spec.org/2010/catalog">
 
-  <id>urn:readest-zlib-opds:library:${escapeXml(id)}</id>
+  <id>urn:readest-libgen-opds:library:${escapeXml(id)}</id>
   <title>${escapeXml(title)}</title>
   <updated>${now}</updated>
   <author>
-    <name>Z-Library OPDS</name>
+    <name>LibGen OPDS</name>
   </author>
 
   <link rel="self"
@@ -297,11 +297,11 @@ function bookFormatsFeed({ baseUrl, book, formats }) {
       xmlns:dc="http://purl.org/dc/terms/"
       xmlns:opds="http://opds-spec.org/2010/catalog">
 
-  <id>urn:readest-zlib-opds:formats:${escapeXml(book.id)}</id>
+  <id>urn:readest-libgen-opds:formats:${escapeXml(book.id)}</id>
   <title>Formats: ${escapeXml(book.title)}</title>
   <updated>${now}</updated>
   <author>
-    <name>Z-Library OPDS</name>
+    <name>LibGen OPDS</name>
   </author>
 
   <link rel="start"
