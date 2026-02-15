@@ -192,6 +192,7 @@ function bookEntry({ book, baseUrl, now, formats }) {
     ${book.year && book.year !== '0' ? `<dc:date>${escapeXml(book.year)}</dc:date>` : ''}
     ${book.extension ? `<dc:format>${escapeXml(book.extension.toLowerCase())}</dc:format>` : ''}
     ${book.extension ? `<category term="format:${escapeXml(book.extension.toLowerCase())}" label="${escapeXml(book.extension.toUpperCase())}" />` : ''}
+    ${book.filesize ? `<category term="size:${escapeXml(book.filesize)}" label="${escapeXml(book.filesize)}" />` : ''}
     ${coverProxy ? `<link rel="http://opds-spec.org/image" href="${coverProxy}" type="image/jpeg" />` : ''}
     ${coverProxy ? `<link rel="http://opds-spec.org/image/thumbnail" href="${coverProxy}" type="image/jpeg" />` : ''}
     <link rel="http://opds-spec.org/acquisition"
