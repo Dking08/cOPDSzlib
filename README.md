@@ -1,6 +1,6 @@
 # Readest LibGen OPDS Bridge
 
-An OPDS 1.2 catalog server that bridges [Readest](https://readest.com) to Library Genesis (libgen.li), allowing you to search and download books directly from Readest's OPDS reader — **no download limits, no authentication required**.
+An OPDS 1.2 catalog server that bridges [Readest](https://readest.com) to Library Genesis (libgen.li), allowing you to search and download books directly from Readest's OPDS reader — **no download limits, no authentication required**. Built for researchers, students, and avid readers who want a frictionless reading workflow.
 
 ## Features
 
